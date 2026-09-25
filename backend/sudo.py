@@ -5,7 +5,11 @@ import os
 import subprocess
 import threading
 import time
-import tempfile
+
+# write-ends of stdin pipes for long-running privileged children, keyed by
+# the Popen. Held open so openvpn never sees EOF; closed on kill/exit.
+_held_stdin: dict[subprocess.Popen, int] = {}
+_held_lock = threading.Lock()
 
 
 class SudoRequired(Exception):
@@ -18,7 +22,6 @@ class Sudo:
         self._at: float = 0.0
         self._ttl = ttl
         self._lock = threading.Lock()
-
     def verify(self, password: str) -> bool:
         """Check the password against sudo; cache on success."""
         try:
@@ -76,16 +79,16 @@ class Sudo:
     def popen(self, *args: str) -> subprocess.Popen:
         """Privileged long-running Popen (openvpn).
 
-        The password is written to a short-lived FIFO the sudo child reads
-        once from stdin — the secret is never written to a real file on disk
-        (FIFOs live in page cache, not the filesystem), and the fd is closed
-        immediately after the child has consumed it.
+        The password is written to an anonymous pipe (never a file on
+        disk). Crucially, the write end is kept OPEN for the lifetime of
+        the child: openvpn inherits the same stdin, and a closed pipe
+        (EOF) makes a foreground openvpn exit. Close it via
+        close_stdin() when the child is killed or exits.
         """
         pw = self._cached()
         if not pw or not self.available():
             raise SudoRequired()
 
-        # Create an anonymous pipe; pass the write end via fd inheritance.
         r, w = os.pipe()
         proc = subprocess.Popen(
             ["sudo", "-S", *args],
@@ -98,8 +101,27 @@ class Sudo:
         with os.fdopen(w, "w") as f:
             f.write(pw + "\n")
             f.flush()
-        os.close(w)          # EOF -> sudo consumes the password and runs
+        # do NOT close the write end — keep it held until the child dies
+        with _held_lock:
+            _held_stdin[proc] = w
         return proc
+
+    def close_stdin(self, proc: subprocess.Popen) -> None:
+        """Release the held stdin pipe (safe to call more than once)."""
+        with _held_lock:
+            fd = _held_stdin.pop(proc, None)
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def reap_stdin(self) -> None:
+        """Drop pipes for children that have exited (call occasionally)."""
+        with _held_lock:
+            dead = [p for p in _held_stdin if p.poll() is not None]
+        for p in dead:
+            self.close_stdin(p)
 
     def status(self) -> dict:
         with self._lock:

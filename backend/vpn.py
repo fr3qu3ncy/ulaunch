@@ -19,6 +19,9 @@ VPN_DIR = BASE / "vpn"
 LOG_DIR = BASE / "vpn-logs"
 RUN_DIR = BASE / "run"
 
+# live Popen per preset, for stdin-pipe release on kill/exit
+_procs: dict[str, subprocess.Popen] = {}
+
 
 def _ensure_dirs() -> None:
     VPN_DIR.mkdir(parents=True, exist_ok=True)
@@ -137,7 +140,32 @@ def _pid_alive(pid: int | None) -> bool:
         return False
 
 
+def _find_openvpn() -> list[tuple[int, str]]:
+    """(pid, cmdline) for live openvpn processes started by ulaunch."""
+    out = []
+    try:
+        p = subprocess.run(["ps", "-eo", "pid=,args="],
+                           capture_output=True, text=True, timeout=5)
+        for line in p.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(None, 1)
+            if len(parts) != 2:
+                continue
+            pid_s, args = parts
+            if "openvpn" in args and "--config" in str(VPN_DIR):
+                try:
+                    out.append((int(pid_s), args))
+                except ValueError:
+                    pass
+    except Exception:
+        pass
+    return out
+
+
 def status() -> dict:
+    sudo.reap_stdin()
     active = None
     for p in list_presets():
         pid = _read_pid(p["name"])
@@ -146,11 +174,15 @@ def status() -> dict:
             break
     if active:
         return {"connected": True, "preset": active, "pid": _read_pid(active)}
-    # maybe connected outside ulaunch?
+    # maybe connected outside ulaunch (or by a previous server instance)?
+    ovpn = _find_openvpn()
+    if ovpn:
+        return {"connected": True, "preset": None,
+                "note": "openvpn running outside ulaunch"}
     net = gather_net()
     if net["vpn"]["active"]:
         return {"connected": True, "preset": None,
-                "note": "openvpn running outside ulaunch"}
+                "note": "vpn interface active — openvpn running outside ulaunch"}
     return {"connected": False}
 
 
@@ -159,6 +191,9 @@ def connect(name: str) -> dict:
     cfg = VPN_DIR / f"{name}.ovpn"
     if not cfg.exists():
         raise ValueError(f"preset '{name}' not found")
+    if not tool()["installed"]:
+        raise ValueError("openvpn is not installed — use the INSTALL button "
+                         "on the VPN screen first")
     cur = status()
     if cur["connected"] and cur.get("preset") == name:
         raise ValueError("already connected")
@@ -183,6 +218,7 @@ def connect(name: str) -> dict:
         if log.exists():
             tail = log.read_text()[-600:]
         _pid_file(name).unlink(missing_ok=True)
+        _release(name, proc)
         raise ValueError(f"openvpn exited immediately\n{tail}")
     mp = _meta_path(name)
     meta = {}
@@ -193,7 +229,17 @@ def connect(name: str) -> dict:
             pass
     meta["last_connected"] = time.strftime("%Y-%m-%d %H:%M:%S")
     mp.write_text(json.dumps(meta))
+    _procs[name] = proc
     return {"connected": True, "preset": name, "pid": proc.pid}
+
+
+def _release(name: str | None, proc: subprocess.Popen | None) -> None:
+    """Drop the held stdin pipe for a dead/killed openvpn."""
+    if proc is not None:
+        sudo.close_stdin(proc)
+    if name and name in _procs:
+        _procs.pop(name, None)
+    sudo.reap_stdin()
 
 
 def disconnect() -> dict:
@@ -225,9 +271,22 @@ def disconnect() -> dict:
                     os.kill(pid, signal.SIGKILL)
                 except (ProcessLookupError, PermissionError):
                     pass
-    if name:
+        _release(name, _procs.get(name))
         _pid_file(name).unlink(missing_ok=True)
-    return {"connected": False, "killed": killed}
+        return {"connected": False, "killed": killed}
+
+    # connected outside ulaunch — best effort: kill the openvpn we found
+    for ovp in _find_openvpn():
+        try:
+            os.killpg(os.getpgid(ovp[0]), signal.SIGTERM)
+            killed = True
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                os.kill(ovp[0], signal.SIGTERM)
+                killed = True
+            except (ProcessLookupError, PermissionError):
+                pass
+    return {"connected": not _find_openvpn(), "killed": killed}
 
 
 def log_tail(name: str, lines: int = 80) -> str:
