@@ -127,6 +127,42 @@ export async function exitApp(action: ExitAction): Promise<void> {
   })
 }
 
+export interface SystemStatus {
+  has_systemd: boolean
+  actions: string[]
+}
+
+export function systemStatus(): Promise<SystemStatus> {
+  return getJSON<SystemStatus>('/api/system/status')
+}
+
+export function systemAction(action: string) {
+  return postJSON(`/api/system/${action}`, {})
+}
+
+export interface Settings {
+  idle_timeout: number
+  scan_flags: Record<string, unknown>
+}
+
+export function getSettings(): Promise<Settings> {
+  return getJSON<Settings>('/api/settings')
+}
+
+export function putSettings(payload: Partial<Settings>): Promise<Settings> {
+  const r = fetch('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+    .then(async resp => {
+      const data = await resp.json().catch(() => ({}))
+      if (!resp.ok) throw new Error(data?.detail || `settings -> ${resp.status}`)
+      return data as Settings
+    })
+  return r
+}
+
 export function fmtUptime(s: number): string {
   const d = Math.floor(s / 86400)
   const h = Math.floor((s % 86400) / 3600)

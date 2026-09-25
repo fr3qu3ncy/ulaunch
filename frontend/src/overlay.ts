@@ -1,0 +1,148 @@
+/** Matrix-rain idle overlay. Created once on <body> so it survives
+ *  app re-renders. Animation pauses while hidden (battery).
+ *  Any key/mouse input wakes it. */
+
+const DEFAULT_TIMEOUT_S = 60
+
+let overlay: HTMLDivElement | null = null
+let canvas: HTMLCanvasElement | null = null
+let ctx: CanvasRenderingContext2D | null = null
+let raf = 0
+let visible = false
+let timeoutS = DEFAULT_TIMEOUT_S
+let lastActivity = Date.now()
+let cols: number[] = []       // per-column row position (in glyph units)
+let colSpeeds: number[] = []
+let lastFrame = 0
+
+const GLYPHS = 'アカサタナハマヤラワ0123456789ABCDEF<>/\\|=+*^-;:[]{}$#@%&'
+const GLYPH = 16
+
+function makeOverlay(): HTMLDivElement {
+  const o = document.createElement('div')
+  o.className = 'overlay'
+  o.id = 'overlay'
+  o.setAttribute('aria-hidden', 'true')
+  const cv = document.createElement('canvas')
+  o.appendChild(cv)
+  const s = document.createElement('div')
+  s.className = 'standby'
+  s.innerHTML = '<div class="s1">STANDBY</div><div class="s2">PRESS ANY KEY</div>'
+  o.appendChild(s)
+  document.body.appendChild(o)
+  return o
+}
+
+function sizeCanvas() {
+  if (!canvas || !ctx) return
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  canvas.width = Math.floor(window.innerWidth * dpr)
+  canvas.height = Math.floor(window.innerHeight * dpr)
+  canvas.style.width = window.innerWidth + 'px'
+  canvas.style.height = window.innerHeight + 'px'
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  const n = Math.ceil(window.innerWidth / GLYPH)
+  if (cols.length !== n) {
+    cols = new Array(n).fill(0).map(() => Math.floor(Math.random() * -40))
+    colSpeeds = new Array(n).fill(0).map(() => 0.4 + Math.random() * 1.2)
+  }
+}
+
+function draw(t: number) {
+  raf = 0
+  if (!visible) return
+  if (t - lastFrame < 33) { raf = requestAnimationFrame(draw); return }  // ~30fps cap
+  lastFrame = t
+  if (!ctx || !canvas) return
+  const w = window.innerWidth, h = window.innerHeight
+  // fade previous frame
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.12)'
+  ctx.fillRect(0, 0, w, h)
+  ctx.font = `${GLYPH}px monospace`
+  const n = cols.length
+  for (let i = 0; i < n; i++) {
+    const y = cols[i] * GLYPH
+    const ch = GLYPHS[Math.floor(Math.random() * GLYPHS.length)]
+    // head glyph bright, tail green
+    ctx.fillStyle = '#eaffea'
+    ctx.fillText(ch, i * GLYPH, y)
+    ctx.fillStyle = 'rgba(61, 255, 158, 0.75)'
+    const ch2 = GLYPHS[Math.floor(Math.random() * GLYPHS.length)]
+    ctx.fillText(ch2, i * GLYPH, y - GLYPH)
+    cols[i] += colSpeeds[i]
+    if (y > h && Math.random() > 0.975) {
+      cols[i] = Math.floor(Math.random() * -20)
+      colSpeeds[i] = 0.4 + Math.random() * 1.2
+    }
+  }
+  raf = requestAnimationFrame(draw)
+}
+
+function show() {
+  if (visible) return
+  visible = true
+  overlay?.classList.add('on')
+  sizeCanvas()
+  if (ctx) {
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, window.innerWidth, window.innerHeight)
+  }
+  raf = requestAnimationFrame(draw)
+}
+
+export function hide(): void {
+  if (!visible) return
+  visible = false
+  overlay?.classList.remove('on')
+  if (raf) { cancelAnimationFrame(raf); raf = 0 }
+}
+
+export function isOn(): boolean {
+  return visible
+}
+
+export function wake(): void {
+  lastActivity = Date.now()
+  hide()
+}
+
+export function setIdleTimeout(s: number): void {
+  timeoutS = Math.max(10, Math.min(3600, s))
+  /* if we're idle longer than the new timeout, kick in immediately */
+  if (Date.now() - lastActivity > timeoutS * 1000) show()
+}
+
+function onActivity(e: Event): void {
+  if (visible) {
+    /* swallow the waking input so it doesn't navigate the UI */
+    if (e instanceof KeyboardEvent || e instanceof MouseEvent) {
+      e.preventDefault()
+    }
+    wake()
+    return
+  }
+  lastActivity = Date.now()
+}
+
+export function initOverlay(initialS: number = DEFAULT_TIMEOUT_S): void {
+  if (overlay) return
+  timeoutS = Math.max(10, Math.min(3600, initialS))
+  /* on-device debugging hook */
+  ;(window as any).__ulaunchOverlay = () => ({
+    visible, timeoutS, idleS: Math.round((Date.now() - lastActivity) / 1000),
+    hidden: document.hidden, cols: cols.length,
+  })
+  overlay = makeOverlay()
+  canvas = overlay.querySelector('canvas')!
+  ctx = canvas.getContext('2d')
+  sizeCanvas()
+  window.addEventListener('resize', () => { if (visible) sizeCanvas() })
+  window.addEventListener('keydown', onActivity, true)
+  window.addEventListener('mousedown', onActivity, true)
+  window.addEventListener('touchstart', onActivity, true)
+  window.addEventListener('mousemove', onActivity, { passive: true })
+  setInterval(() => {
+    if (visible || document.hidden) return
+    if (Date.now() - lastActivity > timeoutS * 1000) show()
+  }, 1000)
+}

@@ -17,6 +17,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import vpn
+import settings
+import system
 from net import gather_net
 from scanner import scanner
 from sudo import SudoRequired, sudo
@@ -182,6 +184,43 @@ def vpn_disconnect() -> dict:
 @app.get("/api/vpn/log")
 def vpn_log(name: str = Query(...), lines: int = Query(80, le=400)) -> dict:
     return {"name": name, "log": vpn.log_tail(name, lines)}
+
+
+# ── system ──────────────────────────────────────────────────────
+
+@app.get("/api/system/status")
+def system_status() -> dict:
+    return {
+        "has_systemd": system.has_systemd(),
+        "actions": list(system.ACTIONS.keys()),
+    }
+
+
+@app.post("/api/system/{action}")
+def system_action(action: str) -> dict:
+    try:
+        return system.do_action(action)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except SudoRequired:
+        raise HTTPException(401, "sudo password required")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, str(e))
+
+
+# ── settings ────────────────────────────────────────────────────
+
+@app.get("/api/settings")
+def settings_get() -> dict:
+    return settings.get()
+
+
+@app.put("/api/settings")
+def settings_put(payload: dict) -> dict:
+    try:
+        return settings.set_all(payload or {})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 # ── scanner ─────────────────────────────────────────────────────

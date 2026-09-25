@@ -4,9 +4,11 @@ import {
   vpnPresets, vpnAddPreset, vpnDeletePreset, vpnStatus,
   vpnConnect, vpnDisconnect, vpnLog,
   toolsCheck, toolsInstall, sudoVerify,
+  systemStatus, systemAction, getSettings, putSettings,
   type Preset, type VpnStatus,
 } from './api'
 import { mountScan, type ScanHandle } from './scan'
+import * as overlay from './overlay'
 
 type Screen = 'home' | 'vpn' | 'scan' | 'system' | 'settings'
 
@@ -332,34 +334,123 @@ function startLogPoll() {
 function stopLogPoll() { if (vpnLogTimer) { clearInterval(vpnLogTimer); vpnLogTimer = null } }
 
 /* ───────────────────────── SCAN / SYSTEM / SETTINGS ───────────────────────── */
-function soonContent(name: string): HTMLElement {
-  const c = el('div', 'content')
-  const s = el('div', 'soon')
-  s.innerHTML = `<div class="big">${name} <em>OFFLINE</em></div>arrives in the next milestone`
-  c.appendChild(s)
-  return c
-}
-
 function systemContent(): HTMLElement {
   const c = el('div', 'content')
   c.appendChild(el('div', 'section-title', 'POWER'))
   const g = el('div', 'sys-grid')
-  const items: [string, string, string][] = [
-    ['SUSPEND', '⏸', 'amber'], ['RESTART', '↻', 'amber'],
-    ['SHUTDOWN', '⏻', 'danger'], ['POWER OFF', '⊘', 'danger'],
+  const items: [string, string, string, string][] = [
+    ['suspend', 'SUSPEND', '⏸', 'amber'], ['reboot', 'RESTART', '↻', 'amber'],
+    ['shutdown', 'SHUTDOWN', '⏻', 'danger'], ['poweroff', 'POWER OFF', '⊘', 'danger'],
   ]
-  for (const [label, ico, cls] of items) {
+  for (const [action, label, ico, cls] of items) {
     const b = el('button', `sys-btn ${cls}`)
     b.tabIndex = 0
     b.innerHTML = `<span class="ico">${ico}</span>${label}`
+    b.addEventListener('click', () => doPower(action, label, b))
     g.appendChild(b)
   }
   c.appendChild(g)
-  const s = el('div', 'soon')
-  s.innerHTML = '<div class="big">POWER <em>OFFLINE</em></div>wired in the next milestone'
-  s.style.cssText = 'flex:0;padding:1em 0 0'
+  const s = el('div', 'sys-info')
+  s.textContent = 'Power actions need root. Each is confirmed before it runs.'
   c.appendChild(s)
+  systemStatus().then(st => {
+    if (!st.has_systemd) s.textContent = '⚠ systemd not found on this system — power actions unavailable.'
+  }).catch(() => {})
   return c
+}
+
+async function doPower(action: string, label: string, btn: HTMLButtonElement) {
+  const ok = window.confirm(`Really ${label.toLowerCase()} the uConsole?`)
+  if (!ok) return
+  btn.disabled = true
+  btn.classList.add('busy')
+  try {
+    await api(() => systemAction(action))
+    btn.innerHTML = `<span class="ico">✓</span>${label} SENDING…`
+    /* the device goes down; show it for a moment if it doesn't */
+    setTimeout(() => { btn.disabled = false; btn.classList.remove('busy') }, 8000)
+  } catch (e: any) {
+    btn.disabled = false
+    btn.classList.remove('busy')
+    window.alert(`${label} failed: ${e?.message || e}`)
+  }
+}
+
+function settingsContent(): HTMLElement {
+  const c = el('div', 'content')
+  c.appendChild(el('div', 'section-title', 'SCREENSAVER'))
+  const idleRow = el('div', 'setting-row')
+  idleRow.appendChild(el('span', 'setting-label', 'IDLE TIMEOUT'))
+  const sel = el('select', 'select-input')
+  for (const s of [15, 30, 60, 120, 300, 600]) {
+    const o = el('option'); o.value = String(s); o.textContent = s < 60 ? `${s} seconds` : `${Math.round(s / 60)} minute${s >= 120 ? 's' : ''}`
+    sel.appendChild(o)
+  }
+  sel.addEventListener('change', async () => {
+    try {
+      const st = await putSettings({ idle_timeout: Number(sel.value) })
+      overlay.setIdleTimeout(st.idle_timeout)
+      flashSaved(c)
+    } catch (e: any) { window.alert(String(e?.message || e)) }
+  })
+  idleRow.appendChild(sel)
+  c.appendChild(idleRow)
+
+  c.appendChild(el('div', 'section-title', 'SCAN DEFAULTS'))
+  const flagLabels: [string, string][] = [
+    ['deep', 'Deep scan (versions + scripts)'],
+    ['udp', 'UDP top-100'],
+    ['full_tcp', 'Full TCP 1-65535'],
+  ]
+  for (const [key, label] of flagLabels) {
+    const row = el('div', 'setting-row')
+    const cb = el('input', 'check-input')
+    cb.type = 'checkbox'
+    cb.id = `flag-${key}`
+    cb.addEventListener('change', async () => {
+      try {
+        await putSettings({ scan_flags: { [key]: cb.checked } })
+        flashSaved(c)
+      } catch (e: any) { window.alert(String(e?.message || e)) }
+    })
+    const lb = el('label', 'setting-label')
+    lb.htmlFor = cb.id
+    lb.textContent = label
+    row.appendChild(cb); row.appendChild(lb)
+    c.appendChild(row)
+  }
+
+  c.appendChild(el('div', 'section-title', 'ABOUT'))
+  const ab = el('div', 'about')
+  ab.innerHTML = 'ULAUNCH · network &amp; system launcher<br>uConsole 1280×720 · local only (127.0.0.1)'
+  c.appendChild(ab)
+
+  /* load current values (once per page session — re-renders must not
+     overwrite a value the user just changed, and a stale in-flight GET
+     must not clobber a change the user just made) */
+  if (!settingsLoaded) {
+    settingsLoaded = true
+    getSettings().then(st => {
+      if (sel.isConnected) sel.value = String(st.idle_timeout)
+      const f = st.scan_flags || {}
+      for (const [key] of flagLabels) {
+        const cb = document.getElementById(`flag-${key}`) as HTMLInputElement | null
+        if (cb) cb.checked = Boolean(f[key])
+      }
+    }).catch(() => {})
+  }
+  return c
+}
+
+let settingsLoaded = false
+
+let savedFlashTimer: number | null = null
+function flashSaved(c: HTMLElement) {
+  c.querySelector('.saved-flash')?.remove()
+  const f = el('div', 'saved-flash', '✓ SAVED')
+  c.appendChild(f)
+  if (savedFlashTimer) clearTimeout(savedFlashTimer)
+  savedFlashTimer = window.setTimeout(() => f.remove(), 1500)
 }
 
 function footer(): HTMLElement {
@@ -388,16 +479,6 @@ function escMenu(): HTMLElement {
   return m
 }
 
-function overlay(): HTMLElement {
-  const o = el('div', 'overlay'); o.id = 'overlay'
-  const cv = document.createElement('canvas')
-  o.appendChild(cv)
-  const s = el('div', 'standby')
-  s.innerHTML = '<div class="s1">STANDBY</div><div class="s2">PRESS ANY KEY</div>'
-  o.appendChild(s)
-  return o
-}
-
 /* ───────────────────────── render ───────────────────────── */
 function render() {
   app.innerHTML = ''
@@ -411,10 +492,9 @@ function render() {
     scanHandle = mountScan(holder)
   }
   else if (screen === 'system') app.appendChild(systemContent())
-  else app.appendChild(soonContent('SETTINGS'))
+  else app.appendChild(settingsContent())
   app.appendChild(footer())
   app.appendChild(escMenu())
-  app.appendChild(overlay())
   if (escOpen) document.getElementById('esc-menu')!.classList.add('open')
 }
 
@@ -534,3 +614,7 @@ refresh()
 setInterval(refresh, 15_000)
 setInterval(tickClock, 5_000)
 tickClock()
+
+/* idle screensaver — timeout comes from settings */
+overlay.initOverlay(60)
+getSettings().then(st => overlay.setIdleTimeout(st.idle_timeout)).catch(() => {})

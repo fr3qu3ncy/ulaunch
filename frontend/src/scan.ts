@@ -379,6 +379,22 @@ export function mountScan(container: HTMLElement): ScanHandle {
     .then(o => { options = o; if (phase === 'pick') render() })
     .catch(() => { if (phase === 'pick') render() })
 
+  /* apply saved scan defaults */
+  fetch('/api/settings').then(r => r.ok ? r.json() : null).then(st => {
+    if (!st?.scan_flags) return
+    const f = st.scan_flags
+    flags = {
+      ...flags,
+      deep: f.deep !== undefined ? Boolean(f.deep) : flags.deep,
+      service_version: f.service_version !== undefined ? Boolean(f.service_version) : flags.service_version,
+      scripts: f.scripts !== undefined ? Boolean(f.scripts) : flags.scripts,
+      udp: f.udp !== undefined ? Boolean(f.udp) : flags.udp,
+      full_tcp: f.full_tcp !== undefined ? Boolean(f.full_tcp) : flags.full_tcp,
+      udp_top: f.udp_top !== undefined ? Number(f.udp_top) : flags.udp_top,
+    }
+    if (phase === 'pick') render()
+  }).catch(() => {})
+
   return {
     destroy() {
       destroyed = true
