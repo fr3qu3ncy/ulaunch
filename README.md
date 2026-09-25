@@ -13,23 +13,43 @@ system power controls in one fast, keyboard-first app.
 | Layer     | Tech                                              |
 |-----------|---------------------------------------------------|
 | Backend   | Python 3.11+ / FastAPI / uvicorn / websockets (venv) |
-| Frontend  | TypeScript + Vite, built to static assets served by the same process |
+| Frontend  | TypeScript + Vite, **prebuilt static committed in the repo** (no node needed on-device) |
 | Display   | Chromium kiosk at 1280x720                        |
 | Tools     | nmap, openvpn, ip, nmcli, systemctl (system binaries via subprocess) |
 
 ## Install (uConsole or any Linux with Chromium)
 
+The frontend ships prebuilt in `backend/static/`, so **you do not need node**
+on the uConsole — important when you're on the 8GB EMMC. All the device needs
+is Python 3 (for the venv) and Chromium.
+
 ```sh
 git clone https://github.com/fr3qu3ncy/ulaunch
 cd ulaunch
-./install.sh
+./install.sh      # venv + python deps + desktop icon (uses the prebuilt frontend)
 ./ulaunch
 ```
 
 `install.sh` is idempotent — re-run it after every `git pull`.
-It creates the venv, builds the frontend, probes for nmap/openvpn
-(warns only — the app offers in-app install with a sudo prompt at runtime),
-and drops a desktop quick-launch icon.
+It creates the venv, uses the prebuilt frontend (or rebuilds it if node
+happens to be present), probes for nmap/openvpn (warns only — the app offers
+in-app install with a sudo prompt at runtime), and drops a desktop
+quick-launch icon.
+
+### Rebuilding the frontend (only if you change it)
+
+The committed `backend/static/` is generated from `frontend/`. To regenerate
+after editing the TypeScript/CSS (needs node + npm, ~30MB — do this on a
+machine with space, then push):
+
+```sh
+cd frontend
+npm ci
+npm run build        # writes to ../backend/static
+cd ..
+git add backend/static
+git commit -am "rebuild frontend"
+```
 
 ## Daily use
 
@@ -44,17 +64,17 @@ and drops a desktop quick-launch icon.
 backend/
   main.py       FastAPI app: /api/* + static SPA (127.0.0.1:8317)
   net.py        interface/VPN/battery/uptime detection (ip -j, nmcli)
-  vpn.py        (M2) openvpn presets, connect/disconnect, log tail
-  scanner.py    (M3) staged nmap engine, WebSocket progress streaming
-  system.py     (M4) suspend/restart/shutdown via systemd
-  sudo.py       (M2) in-app sudo prompt (sudo -S, session-cached)
-  tools.py      (M2) tool detection + apt install
+  vpn.py        openvpn presets, connect/disconnect, log tail
+  scanner.py    staged nmap engine, WebSocket progress streaming
+  system.py     suspend/restart/shutdown via systemd
+  sudo.py       in-app sudo prompt (sudo -S, session-cached)
+  static/       **prebuilt frontend (committed — no node needed on-device)**
 frontend/
   src/          TypeScript + Vite (no framework — small state renderer)
   public/fonts/ self-hosted Orbitron/Rajdhani (woff2)
-  vite.config.ts  builds to ../backend/static
+  vite.config.ts  builds to ../backend/static (only needed when you change it)
 ulaunch         entrypoint: server + kiosk browser + clean shutdown
-install.sh      venv + frontend build + tool probe + desktop icon
+install.sh      venv + python deps + tool probe + desktop icon (no node)
 ```
 
 State lives in `~/.ulaunch/` (vpn presets, scan history, settings, run pids).

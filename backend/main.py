@@ -4,6 +4,7 @@ Lifecycle: the `ulaunch` launcher script owns both the server and the
 kiosk browser. Closing the browser (via /api/exit) ends the launcher,
 whose trap cleans up the server. Desktop re-launch = run ./ulaunch again.
 """
+import asyncio
 import os
 import shutil
 import signal
@@ -11,11 +12,14 @@ import subprocess
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import vpn
 from net import gather_net
+from scanner import scanner
+from sudo import SudoRequired, sudo
 
 BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
@@ -72,6 +76,191 @@ def exit_action(payload: dict) -> dict:
     return {"ok": True, "action": action, "browser_closed": closed}
 
 
+# ── sudo ────────────────────────────────────────────────────────
+
+@app.get("/api/sudo/status")
+def sudo_status() -> dict:
+    return sudo.status()
+
+
+@app.post("/api/sudo/verify")
+def sudo_verify(payload: dict) -> dict:
+    pw = (payload or {}).get("password", "")
+    if not sudo.verify(pw):
+        raise HTTPException(401, "wrong password")
+    return {"ok": True}
+
+
+# ── tools ───────────────────────────────────────────────────────
+
+@app.get("/api/tools")
+def tools() -> dict:
+    import shutil as _sh
+    nmap_path = _sh.which("nmap")
+    return {
+        "nmap": {
+            "installed": bool(nmap_path),
+            "version": _nmap_version(nmap_path),
+        },
+        "openvpn": vpn.tool(),
+    }
+
+
+def _nmap_version(path: str | None) -> str:
+    if not path:
+        return ""
+    try:
+        p = subprocess.run([path, "--version"],
+                           capture_output=True, text=True, timeout=5)
+        import re
+        m = re.search(r"[Nn]map version (\d+\.\d+(?:\.\d+)?)", p.stdout)
+        return m.group(1) if m else ""
+    except Exception:
+        return ""
+
+
+@app.post("/api/tools/install")
+def tools_install(payload: dict) -> dict:
+    tool = (payload or {}).get("tool", "")
+    if tool not in ("nmap", "openvpn"):
+        raise HTTPException(400, "unknown tool")
+    try:
+        p = sudo.run("apt-get", "install", "-y", tool, timeout=900)
+    except SudoRequired:
+        raise HTTPException(401, "sudo password required")
+    if p.returncode != 0:
+        raise HTTPException(500, (p.stderr or "")[-400:] or "install failed")
+    return tools()
+
+
+# ── vpn ─────────────────────────────────────────────────────────
+
+@app.get("/api/vpn/presets")
+def vpn_presets() -> list:
+    return vpn.list_presets()
+
+
+@app.post("/api/vpn/presets")
+def vpn_preset_add(payload: dict) -> dict:
+    try:
+        return vpn.save_preset(payload.get("name", ""), payload.get("config", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/vpn/presets/{name}")
+def vpn_preset_del(name: str) -> dict:
+    try:
+        ok = vpn.delete_preset(name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not ok:
+        raise HTTPException(404, "preset not found")
+    return {"ok": True}
+
+
+@app.get("/api/vpn/status")
+def vpn_status() -> dict:
+    return vpn.status()
+
+
+@app.post("/api/vpn/connect")
+def vpn_connect(payload: dict) -> dict:
+    try:
+        return vpn.connect(payload.get("name", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except SudoRequired:
+        raise HTTPException(401, "sudo password required")
+
+
+@app.post("/api/vpn/disconnect")
+def vpn_disconnect() -> dict:
+    return vpn.disconnect()
+
+
+@app.get("/api/vpn/log")
+def vpn_log(name: str = Query(...), lines: int = Query(80, le=400)) -> dict:
+    return {"name": name, "log": vpn.log_tail(name, lines)}
+
+
+# ── scanner ─────────────────────────────────────────────────────
+
+@app.get("/api/scan/subnets")
+def scan_subnets() -> dict:
+    res = []
+    for i in gather_net(show_virtual=False)["interfaces"]:
+        if i["up"] and i["ipv4"] and i["type"] in ("eth", "wifi", "vpn"):
+            res.append({
+                "name": i["name"], "type": i["type"],
+                "subnet": i["ipv4"]["subnet"], "ipv4": i["ipv4"]["addr"],
+            })
+    return {"options": res}
+
+
+@app.get("/api/scan/jobs")
+def scan_jobs() -> list:
+    return scanner.jobs()
+
+
+@app.get("/api/scan/jobs/{job_id}")
+def scan_job(job_id: str) -> dict:
+    job = scanner.get(job_id)
+    if not job:
+        raise HTTPException(404, "scan not found")
+    return scanner._public(job)
+
+
+@app.post("/api/scan/start")
+def scan_start(payload: dict) -> dict:
+    subnet = (payload or {}).get("subnet", "")
+    iface = (payload or {}).get("interface", "")
+    flags = (payload or {}).get("flags", {}) or {}
+    import ipaddress
+    try:
+        ipaddress.ip_network(subnet, strict=False)
+    except ValueError:
+        raise HTTPException(400, f"not a valid subnet: {subnet!r}")
+    if not flags:
+        flags = {"deep": True, "service_version": True, "scripts": True,
+                 "udp": False, "full_tcp": False, "udp_top": 100}
+    job = scanner.start(subnet, iface, flags)
+    return scanner._public(job)
+
+
+@app.post("/api/scan/jobs/{job_id}/cancel")
+def scan_cancel(job_id: str) -> dict:
+    return {"ok": scanner.cancel(job_id)}
+
+
+@app.websocket("/ws/scan/{job_id}")
+async def scan_ws(ws: WebSocket, job_id: str):
+    import json as _json
+    job = scanner.get(job_id)
+    if not job:
+        await ws.close(code=4004)
+        return
+    q = job.subscribe()
+    try:
+        await ws.send_text(_json.dumps({
+            "type": "state", "state": scanner._public(job),
+        }))
+        while True:
+            try:
+                stage, line = await asyncio.wait_for(q.get(), timeout=1.0)
+                await ws.send_text(_json.dumps(
+                    {"type": "line", "stage": stage, "line": line}))
+            except asyncio.TimeoutError:
+                if job.status in ("done", "error", "cancelled"):
+                    await ws.send_text(_json.dumps(
+                        {"type": "state", "state": scanner._public(job)}))
+                    break
+    except WebSocketDisconnect:
+        pass
+    finally:
+        job.unsubscribe(q)
+
+
 if STATIC.exists():
     (STATIC / "assets").mkdir(exist_ok=True)
     app.mount("/assets", StaticFiles(directory=STATIC / "assets"), name="assets")
@@ -89,3 +278,4 @@ if STATIC.exists():
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")
+

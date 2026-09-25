@@ -122,6 +122,14 @@ def _vpn(ifaces: list[dict]) -> dict:
     }
 
 
+def subnet_of(iface_name: str) -> str | None:
+    """Best scan target for an interface: its IPv4 subnet, else /24."""
+    for i in _interfaces():
+        if i["name"] == iface_name and i["ipv4"]:
+            return i["ipv4"]["subnet"]
+    return None
+
+
 def gather_net(show_virtual: bool = False) -> dict:
     ifaces = _interfaces()
     if not show_virtual:

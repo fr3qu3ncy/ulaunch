@@ -318,6 +318,223 @@ html, body {
 .esc-menu .box .btn { width: 100%; font-size: 1.3em; }
 .esc-menu .box .hint { text-align: center; color: var(--dim); font-size: 0.95em; letter-spacing: 0.1em; }
 
+/* ── vpn screen ── */
+.vpn-list { display: flex; flex-direction: column; gap: 0.7em; }
+.vpn-row {
+  display: flex; align-items: center; gap: 1em;
+  padding: 0.8em 1.1em;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+}
+.vpn-row.active {
+  border-color: var(--green);
+  box-shadow: 0 0 14px rgba(61, 255, 158, 0.25), inset 0 0 20px rgba(61, 255, 158, 0.05);
+}
+.vpn-row-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0.25em; }
+.vpn-row-name {
+  font-family: var(--font-display);
+  font-size: 1.3em; font-weight: 700; letter-spacing: 0.06em;
+  display: flex; align-items: center; gap: 0.6em;
+}
+.vpn-row-meta { color: var(--dim); font-size: 1em; font-weight: 500; letter-spacing: 0.04em; }
+.btn.small { padding: 0.4em 0.8em; font-size: 0.9em; }
+
+.vpn-add { display: flex; flex-direction: column; gap: 0.7em; }
+.text-input {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 1.15em; font-weight: 500;
+  padding: 0.7em 1em;
+  outline: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.text-input:focus {
+  border-color: var(--cyan);
+  box-shadow: 0 0 12px rgba(0, 245, 255, 0.3);
+}
+.text-input.config-ta {
+  min-height: 150px; max-height: 34vh;
+  font-family: monospace;
+  font-size: 1em;
+  resize: vertical;
+  line-height: 1.4;
+}
+.form-err { color: var(--red); font-weight: 600; min-height: 1.2em; letter-spacing: 0.03em; }
+
+.tool-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 1em;
+  padding: 0.8em 1.1em;
+  border: 1px solid rgba(255, 194, 71, 0.5);
+  background: rgba(255, 194, 71, 0.07);
+  border-radius: 8px;
+  font-weight: 600; letter-spacing: 0.04em;
+}
+
+.vpn-log {
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  padding: 0.8em 1em;
+  font-family: monospace;
+  font-size: 0.95em; line-height: 1.45;
+  color: var(--green);
+  white-space: pre-wrap; word-break: break-word;
+  min-height: 90px; max-height: 26vh;
+  overflow-y: auto;
+}
+.vpn-log::-webkit-scrollbar { width: 6px; }
+.vpn-log::-webkit-scrollbar-thumb { background: rgba(61, 255, 158, 0.3); border-radius: 3px; }
+
+.empty {
+  color: var(--dim);
+  font-size: 1.1em; font-weight: 500; letter-spacing: 0.06em;
+  padding: 0.6em 0.2em;
+}
+.sub { color: var(--dim); font-size: 1.05em; letter-spacing: 0.03em; margin-bottom: 0.4em; }
+
+/* ── scan screen ── */
+.scan-holder { padding-top: 0.8em; }
+.scan-content { display: flex; flex-direction: column; gap: 0.8em; height: 100%; }
+.scan-head {
+  display: flex; align-items: baseline; gap: 1em;
+  font-family: var(--font-display);
+}
+.scan-target { font-size: 1.6em; font-weight: 700; color: var(--cyan); text-shadow: 0 0 10px rgba(0,245,255,0.5); }
+.scan-status { font-size: 1.05em; font-weight: 700; letter-spacing: 0.2em; color: var(--dim); }
+.scan-status.running { color: var(--amber); animation: pulse 1.4s ease-in-out infinite; }
+.scan-status.done { color: var(--green); }
+.scan-status.error { color: var(--red); }
+.scan-status.cancelled { color: var(--magenta); }
+
+.scan-opt-list { display: flex; flex-direction: column; gap: 0.6em; }
+.scan-opt {
+  display: flex; flex-direction: column; gap: 0.2em; align-items: flex-start;
+  padding: 0.8em 1.1em;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  cursor: pointer; outline: none;
+  color: var(--text); text-align: left;
+  font-family: var(--font-body);
+  transition: all 0.12s ease;
+}
+.scan-opt:hover { border-color: rgba(255, 46, 196, 0.5); }
+.scan-opt.active {
+  border-color: var(--magenta);
+  box-shadow: 0 0 14px rgba(255, 46, 196, 0.3), inset 0 0 20px rgba(255, 46, 196, 0.06);
+}
+.scan-opt-head { display: flex; align-items: center; gap: 0.7em; font-size: 1.25em; }
+.scan-opt-sub { color: var(--dim); font-size: 1em; font-weight: 500; }
+
+.scan-opts { display: flex; flex-wrap: wrap; gap: 0.6em; }
+.toggle {
+  padding: 0.5em 0.9em;
+  font-family: var(--font-display);
+  font-size: 0.95em; font-weight: 700; letter-spacing: 0.1em;
+  background: rgba(0, 245, 255, 0.04);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  color: var(--dim);
+  cursor: pointer; outline: none;
+  transition: all 0.12s ease;
+}
+.toggle:hover { border-color: rgba(0, 245, 255, 0.5); }
+.toggle.on {
+  border-color: var(--cyan); color: var(--cyan);
+  box-shadow: 0 0 10px rgba(0, 245, 255, 0.3);
+  text-shadow: 0 0 8px rgba(0, 245, 255, 0.7);
+}
+.toggle:focus-visible { border-color: var(--cyan); }
+
+.scan-progress { display: flex; gap: 0.6em; }
+.prog-step {
+  flex: 1;
+  display: flex; align-items: center; gap: 0.5em;
+  padding: 0.6em 0.9em;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  font-family: var(--font-display);
+  font-size: 1em; font-weight: 700; letter-spacing: 0.14em;
+  color: var(--dim);
+}
+.prog-step .prog-dot {
+  width: 1.2em; height: 1.2em; border-radius: 50%;
+  border: 1px solid var(--panel-line);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.8em;
+}
+.prog-step.active {
+  border-color: var(--amber); color: var(--amber);
+  box-shadow: 0 0 12px rgba(255, 194, 71, 0.3);
+}
+.prog-step.active .prog-dot { border-color: var(--amber); animation: pulse 1.2s ease-in-out infinite; }
+.prog-step.done { border-color: rgba(61, 255, 158, 0.5); color: var(--green); }
+.prog-step.done .prog-dot { background: rgba(61, 255, 158, 0.2); border-color: var(--green); color: var(--green); }
+
+.scan-live {
+  padding: 0.5em 0.2em;
+  color: var(--dim); font-size: 1.05em; letter-spacing: 0.04em;
+}
+.scan-live-n { color: var(--green); font-size: 1.3em; text-shadow: 0 0 8px rgba(61,255,158,0.6); }
+
+.scan-log {
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  padding: 0.8em 1em;
+  font-family: monospace;
+  font-size: 0.9em; line-height: 1.4;
+  color: var(--green);
+  white-space: pre-wrap; word-break: break-word;
+  flex: 1; min-height: 120px; max-height: 30vh;
+  overflow-y: auto;
+}
+.scan-log::-webkit-scrollbar { width: 6px; }
+.scan-log::-webkit-scrollbar-thumb { background: rgba(61, 255, 158, 0.3); border-radius: 3px; }
+
+.scan-hosts { display: flex; flex-direction: column; gap: 0.8em; }
+.scan-host {
+  padding: 0.4em 0.2em;
+  font-size: 1.15em; letter-spacing: 0.03em;
+}
+.scan-host-card {
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  padding: 0.8em 1em;
+}
+.scan-host-card-ip {
+  font-family: var(--font-display);
+  font-size: 1.3em; font-weight: 700; margin-bottom: 0.5em;
+}
+.scan-host-card-ip .dim { color: var(--dim); font-size: 0.7em; font-weight: 500; }
+
+.port-table { display: flex; flex-direction: column; gap: 0.3em; }
+.port-row {
+  display: grid;
+  grid-template-columns: 120px 220px 1fr;
+  gap: 0.8em; align-items: baseline;
+  padding: 0.35em 0.5em;
+  border-radius: 4px;
+  font-size: 1.05em;
+}
+.port-row-head {
+  color: var(--dim); font-size: 0.9em; letter-spacing: 0.14em;
+  text-transform: uppercase; font-weight: 700;
+}
+.port-row.open { background: rgba(0, 245, 255, 0.05); }
+.port-row.filtered { opacity: 0.5; }
+.port-row .p-port { font-family: var(--font-display); font-weight: 700; color: var(--cyan); }
+.port-row.filtered .p-port { color: var(--dim); }
+.port-row .p-svc { font-weight: 600; }
+.port-row .p-detail { color: var(--dim); font-size: 0.95em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ── idle overlay (M4) ── */
 .overlay {
   position: fixed; inset: 0; z-index: 200;

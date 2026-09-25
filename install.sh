@@ -16,19 +16,22 @@ echo "▸ venv"
 ./.venv/bin/pip install -r backend/requirements.txt
 echo "  ✓ python deps"
 
-# 2. frontend build (node only needed at install time)
-if command -v npm >/dev/null 2>&1; then
-  echo "▸ frontend build"
+# 2. frontend — uses the prebuilt static bundled in the repo (no node needed).
+#    On a tight uConsole (8GB EMMC) this avoids installing node at all.
+#    If you've modified the frontend and have node available, you can rebuild:
+#        (cd frontend && npm ci && npm run build)
+if [ -f backend/static/index.html ]; then
+  echo "▸ frontend (prebuilt)"
+  echo "  ✓ using bundled static build"
+elif command -v npm >/dev/null 2>&1; then
+  echo "▸ frontend build (node present)"
   (cd frontend && npm install --no-fund --no-audit --loglevel=error && npm run build)
   echo "  ✓ frontend"
 else
-  echo "  ⚠ node/npm not found — using existing build if present"
-fi
-
-[ -f backend/static/index.html ] || {
-  echo "✗ frontend build missing (backend/static/index.html) — install node and re-run"
+  echo "✗ no prebuilt frontend and no node to build one"
+  echo "  expected backend/static/index.html — re-clone or rebuild"
   exit 1
-}
+fi
 
 # 3. system tool probe (warn only — the app offers in-app install at runtime)
 echo "▸ system tools"

@@ -37,6 +37,86 @@ export function fetchNet(): Promise<NetInfo> {
 
 export type ExitAction = 'desktop' | 'hide' | 'exit'
 
+export interface Preset {
+  name: string
+  server: string | null
+  proto: string | null
+  created: string | null
+  last_connected: string | null
+  size: number
+}
+
+export interface VpnStatus {
+  connected: boolean
+  preset: string | null
+  pid?: number
+  note?: string
+}
+
+async function postJSON(path: string, body: unknown): Promise<any> {
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  let data: any = null
+  try { data = await r.json() } catch { /* empty body */ }
+  if (!r.ok) {
+    const err: any = new Error(data?.detail || `${path} -> ${r.status}`)
+    err.status = r.status
+    throw err
+  }
+  return data
+}
+
+export function vpnPresets(): Promise<Preset[]> {
+  return getJSON<Preset[]>('/api/vpn/presets')
+}
+
+export function vpnAddPreset(name: string, config: string) {
+  return postJSON('/api/vpn/presets', { name, config })
+}
+
+export function vpnDeletePreset(name: string): Promise<any> {
+  return fetch(`/api/vpn/presets/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+  }).then(r => r.ok ? { ok: true } : Promise.reject(new Error(r.statusText)))
+}
+
+export function vpnStatus(): Promise<VpnStatus> {
+  return getJSON<VpnStatus>('/api/vpn/status')
+}
+
+export function vpnConnect(name: string) {
+  return postJSON('/api/vpn/connect', { name })
+}
+
+export function vpnDisconnect() {
+  return postJSON('/api/vpn/disconnect', {})
+}
+
+export function vpnLog(name: string, lines = 80): Promise<string> {
+  return getJSON<{ name: string; log: string }>(
+    `/api/vpn/log?name=${encodeURIComponent(name)}&lines=${lines}`,
+  ).then(d => d.log)
+}
+
+export function toolsCheck(): Promise<any> {
+  return getJSON<any>('/api/tools')
+}
+
+export function toolsInstall(tool: string) {
+  return postJSON('/api/tools/install', { tool })
+}
+
+export function sudoStatus(): Promise<{ available: boolean; ttl_remaining: number }> {
+  return getJSON<{ available: boolean; ttl_remaining: number }>('/api/sudo/status')
+}
+
+export function sudoVerify(password: string): Promise<any> {
+  return postJSON('/api/sudo/verify', { password })
+}
+
 export async function exitApp(action: ExitAction): Promise<void> {
   await fetch('/api/exit', {
     method: 'POST',

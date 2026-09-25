@@ -1,5 +1,12 @@
 import './styles.css'
-import { fetchNet, exitApp, fmtUptime, type NetInfo } from './api'
+import {
+  fetchNet, exitApp, fmtUptime, type NetInfo,
+  vpnPresets, vpnAddPreset, vpnDeletePreset, vpnStatus,
+  vpnConnect, vpnDisconnect, vpnLog,
+  toolsCheck, toolsInstall, sudoVerify,
+  type Preset, type VpnStatus,
+} from './api'
+import { mountScan, type ScanHandle } from './scan'
 
 type Screen = 'home' | 'vpn' | 'scan' | 'system' | 'settings'
 
@@ -9,15 +16,21 @@ const TILES: { id: Screen; label: string; ico: string; accent: string }[] = [
   { id: 'system', label: 'SYSTEM', ico: '⏻', accent: 'amber' },
   { id: 'settings', label: 'SETTINGS', ico: '⚙', accent: '' },
 ]
+const ORDER: Screen[] = ['home', 'vpn', 'scan', 'system', 'settings']
 
 const app = document.getElementById('app')!
 let screen: Screen = 'home'
 let escOpen = false
 let lastNet: NetInfo | null = null
-const ORDER: Screen[] = ['home', 'vpn', 'scan', 'system', 'settings']
 
-/* ────────────────────────── rendering ────────────────────────── */
+/* vpn screen state */
+let vpnPresetsCache: Preset[] = []
+let vpnActive: VpnStatus | null = null
+let vpnOpenvpnInstalled: boolean | null = null
+let vpnLogTimer: number | null = null
+let scanHandle: ScanHandle | null = null
 
+/* ───────────────────────── helpers ───────────────────────── */
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K, cls?: string, text?: string,
 ): HTMLElementTagNameMap[K] {
@@ -27,44 +40,101 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return n
 }
 
+async function api<T = any>(p: () => Promise<T>, retryOnSudo: boolean = true): Promise<T> {
+  try {
+    return await p()
+  } catch (e: any) {
+    if (retryOnSudo && e?.status === 401) {
+      await askSudo()
+      return p()
+    }
+    throw e
+  }
+}
+
+let sudoResolver: ((ok: boolean) => void) | null = null
+function askSudo(): Promise<boolean> {
+  return new Promise<boolean>(res => {
+    sudoResolver = res
+    renderSudoModal()
+  })
+}
+
+function renderSudoModal() {
+  document.getElementById('sudo-modal')?.remove()
+  const m = el('div', 'esc-menu open')
+  m.id = 'sudo-modal'
+  const box = el('div', 'box')
+  box.appendChild(el('div', 'title', 'ROOT ACCESS'))
+  const p = el('p', 'sub')
+  p.textContent = 'Enter your sudo password to continue. It is held in memory only and auto-expires.'
+  box.appendChild(p)
+  const inp = el('input', 'text-input')
+  inp.type = 'password'
+  inp.autocomplete = 'off'
+  inp.placeholder = 'password'
+  box.appendChild(inp)
+  const err = el('div', 'form-err')
+  box.appendChild(err)
+  const row = el('div', 'btn-row')
+  const cancel = el('button', 'btn', 'CANCEL')
+  const ok = el('button', 'btn', 'UNLOCK')
+  ok.classList.add('active')
+  const done = (ok: boolean) => {
+    sudoResolver?.(ok)
+    sudoResolver = null
+    m.remove()
+  }
+  cancel.addEventListener('click', () => done(false))
+  ok.addEventListener('click', () => {
+    sudoVerify(inp.value)
+      .then(() => done(true))
+      .catch(() => { err.textContent = 'wrong password — try again' })
+  })
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') ok.click()
+    if (e.key === 'Escape') done(false)
+    e.stopPropagation()
+  })
+  row.appendChild(ok); row.appendChild(cancel)
+  box.appendChild(row)
+  m.appendChild(box)
+  app.appendChild(m)
+  setTimeout(() => inp.focus(), 30)
+}
+
+/* ───────────────────────── header / nav ───────────────────────── */
 function header(net: NetInfo | null): HTMLElement {
   const h = el('header', 'hdr')
   const logo = el('button', 'logo')
   logo.type = 'button'
   logo.title = 'Home'
   logo.innerHTML = 'ULAUNCH<span>_</span>'
-  logo.style.background = 'none'
-  logo.style.border = 'none'
-  logo.style.cursor = 'pointer'
+  logo.style.cssText = 'background:none;border:none;cursor:pointer'
   logo.addEventListener('click', () => go('home'))
   h.appendChild(logo)
   h.appendChild(el('div', 'spacer'))
-
   if (net) {
     const vpn = el('div', `stat ${net.vpn.active ? 'ok' : ''}`)
     vpn.innerHTML = net.vpn.active
       ? `VPN <b>● CONNECTED</b>${net.vpn.interfaces[0] ? ` ${net.vpn.interfaces[0]}` : ''}`
       : 'VPN <b>○ OFFLINE</b>'
     h.appendChild(vpn)
-
     const bat = el('div', 'stat')
     bat.innerHTML = net.battery
       ? `BAT <b>${net.battery.percent}%${net.battery.charging ? ' ⚡' : ''}</b>`
       : 'BAT <b>AC</b>'
     h.appendChild(bat)
-
     const up = el('div', 'stat')
     up.innerHTML = `UP <b>${fmtUptime(net.uptime_s)}</b>`
     h.appendChild(up)
-
-    const clk = el('div', 'stat')
-    clk.id = 'clock'
+    const clk = el('div', 'stat'); clk.id = 'clock'
     h.appendChild(clk)
   }
   return h
 }
 
-function nav(active: Screen): HTMLElement {
+function nav(): HTMLElement {
   const n = el('nav', 'nav')
   for (const t of TILES) {
     const d = el('button', `tile ${screen === t.id ? 'active' : ''}`)
@@ -78,6 +148,7 @@ function nav(active: Screen): HTMLElement {
   return n
 }
 
+/* ───────────────────────── HOME ───────────────────────── */
 function ifaceCard(i: NetInfo['interfaces'][number]): HTMLElement {
   const c = el('div', 'card')
   const typeCls = !i.up ? 'down' : i.type
@@ -86,41 +157,30 @@ function ifaceCard(i: NetInfo['interfaces'][number]): HTMLElement {
   head.appendChild(el('span', 'c-name', i.name))
   head.appendChild(el('span', `c-type ${typeCls}`, !i.up ? 'DOWN' : i.type))
   c.appendChild(head)
-
   if (i.type === 'wifi' && i.up) {
     const sub = el('div', 'c-sub')
-    sub.innerHTML = i.ssid
-      ? `SSID <b>${i.ssid}</b>${i.signal !== null ? ` · ${i.signal}%` : ''}`
-      : 'connected'
+    sub.innerHTML = i.ssid ? `SSID <b>${i.ssid}</b>${i.signal !== null ? ` · ${i.signal}%` : ''}` : 'connected'
     c.appendChild(sub)
   }
   if (i.ipv4) {
-    const sub = el('div', 'c-sub')
-    sub.innerHTML = `IP <b>${i.ipv4.addr}</b>`
-    c.appendChild(sub)
-    const sub2 = el('div', 'c-sub')
-    sub2.innerHTML = `NET <b>${i.ipv4.subnet}</b>`
-    c.appendChild(sub2)
+    const ip = el('div', 'c-sub'); ip.innerHTML = `IP <b>${i.ipv4.addr}</b>`
+    const netd = el('div', 'c-sub'); netd.innerHTML = `NET <b>${i.ipv4.subnet}</b>`
+    c.appendChild(ip)
+    c.appendChild(netd)
   } else if (i.up) {
     c.appendChild(el('div', 'c-sub', 'no IPv4 address'))
   }
-  const st = el('div', 'c-sub')
-  st.textContent = `STATE ${i.state}`
-  c.appendChild(st)
+  c.appendChild(el('div', 'c-sub', `STATE ${i.state}`))
   return c
 }
 
 function homeContent(net: NetInfo | null): HTMLElement {
   const c = el('div', 'content')
-  if (!net) {
-    c.appendChild(el('div', 'soon', 'connecting…'))
-    return c
-  }
+  if (!net) { c.appendChild(el('div', 'soon', 'connecting…')); return c }
   c.appendChild(el('div', 'section-title', 'INTERFACES'))
   const cards = el('div', 'cards')
   for (const i of net.interfaces) cards.appendChild(ifaceCard(i))
   c.appendChild(cards)
-
   if (net.vpn.active) {
     c.appendChild(el('div', 'section-title', 'VPN'))
     const vc = el('div', 'cards')
@@ -137,6 +197,141 @@ function homeContent(net: NetInfo | null): HTMLElement {
   return c
 }
 
+/* ───────────────────────── VPN ───────────────────────── */
+function vpnRow(p: Preset, active: boolean): HTMLElement {
+  const row = el('div', `vpn-row ${active ? 'active' : ''}`)
+  const info = el('div', 'vpn-row-info')
+  info.appendChild(el('div', 'vpn-row-name'))
+  info.querySelector('.vpn-row-name')!.innerHTML =
+    `<span class="dot ${active ? 'on' : ''}"></span> ${p.name}`
+  const meta = el('div', 'vpn-row-meta')
+  meta.textContent = [p.proto, p.server, p.last_connected ? `last ${p.last_connected}` : 'never connected']
+    .filter(Boolean).join(' · ')
+  info.appendChild(meta)
+  row.appendChild(info)
+
+  const btns = el('div', 'btn-row')
+  const act = el('button', `btn ${active ? 'danger' : ''}`)
+  act.textContent = active ? 'DISCONNECT' : 'CONNECT'
+  act.tabIndex = 0
+  act.addEventListener('click', () => {
+    act.disabled = true
+    act.textContent = '…'
+    api(() => active ? vpnDisconnect() : vpnConnect(p.name))
+      .then(refreshVpn)
+      .catch(e => { act.textContent = active ? 'DISCONNECT' : 'CONNECT'; alert(String(e.message || e)) })
+      .finally(() => { act.disabled = false })
+  })
+  btns.appendChild(act)
+  const del = el('button', 'btn small', '✕')
+  del.tabIndex = 0
+  del.title = 'delete preset'
+  del.addEventListener('click', () => {
+    if (!confirm(`Delete preset "${p.name}"?`)) return
+    vpnDeletePreset(p.name).then(refreshVpn).catch(e => alert(String(e.message || e)))
+  })
+  btns.appendChild(del)
+  row.appendChild(btns)
+  return row
+}
+
+function vpnAddForm(): HTMLElement {
+  const wrap = el('div', 'vpn-add')
+  const title = el('div', 'section-title', 'ADD PRESET')
+  wrap.appendChild(title)
+  const name = el('input', 'text-input')
+  name.type = 'text'; name.placeholder = 'preset name (e.g. work)'
+  wrap.appendChild(name)
+  const cfg = el('textarea', 'text-input config-ta')
+  cfg.placeholder = 'paste the full OpenVPN config (.ovpn) here…'
+  wrap.appendChild(cfg)
+  const row = el('div', 'btn-row')
+  const err = el('div', 'form-err')
+  const save = el('button', 'btn active', 'SAVE')
+  save.tabIndex = 0
+  save.addEventListener('click', () => {
+    err.textContent = ''
+    if (!name.value.trim()) { err.textContent = 'name required'; return }
+    vpnAddPreset(name.value.trim(), cfg.value)
+      .then(() => { name.value = ''; cfg.value = ''; refreshVpn() })
+      .catch(e => { err.textContent = String(e.message || e) })
+  })
+  row.appendChild(save)
+  wrap.appendChild(row)
+  wrap.appendChild(err)
+  return wrap
+}
+
+function vpnLogPanel(name: string | null): HTMLElement {
+  const p = el('div', 'vpn-log')
+  if (!name) { p.textContent = '— no log (not connected) —'; return p }
+  p.textContent = 'loading…'
+  const load = () => vpnLog(name, 60)
+    .then(t => { if (document.body.contains(p)) p.textContent = t || '— empty log —' })
+    .catch(() => { if (document.body.contains(p)) p.textContent = '— log unavailable —' })
+  load()
+  return p
+}
+
+function vpnContent(): HTMLElement {
+  const c = el('div', 'content')
+  const banner = el('div', 'section-title')
+  banner.textContent = 'OPENVPN'
+  c.appendChild(banner)
+
+  if (vpnOpenvpnInstalled === false) {
+    const tb = el('div', 'tool-banner')
+    tb.innerHTML = `<span>⚠ openvpn not installed</span>`
+    const inst = el('button', 'btn active', 'INSTALL')
+    inst.tabIndex = 0
+    inst.addEventListener('click', () => {
+      inst.disabled = true; inst.textContent = 'installing…'
+      api(() => toolsInstall('openvpn'))
+        .then(() => { vpnOpenvpnInstalled = true; refreshVpn() })
+        .catch(e => { inst.disabled = false; inst.textContent = 'INSTALL'; alert(String(e.message || e)) })
+    })
+    tb.appendChild(inst)
+    c.appendChild(tb)
+  }
+
+  c.appendChild(el('div', 'section-title', 'PRESETS'))
+  if (vpnPresetsCache.length === 0) {
+    c.appendChild(el('div', 'empty', 'no presets yet — add one below'))
+  } else {
+    const list = el('div', 'vpn-list')
+    for (const p of vpnPresetsCache) list.appendChild(vpnRow(p, vpnActive?.preset === p.name))
+    c.appendChild(list)
+  }
+
+  c.appendChild(vpnAddForm())
+  c.appendChild(el('div', 'section-title', 'LIVE LOG'))
+  c.appendChild(vpnLogPanel(vpnActive?.preset ?? null))
+  return c
+}
+
+async function refreshVpn() {
+  try {
+    vpnPresetsCache = await vpnPresets()
+  } catch { /* keep old */ }
+  try { vpnActive = await vpnStatus() } catch { vpnActive = { connected: false, preset: null } }
+  if (screen === 'vpn') render()
+}
+
+function startLogPoll() {
+  stopLogPoll()
+  vpnLogTimer = window.setInterval(() => {
+    if (screen !== 'vpn') return
+    const p = vpnActive?.preset
+    if (p) vpnLog(p, 60).then(t => {
+      const box = document.querySelector('.vpn-log')
+      if (box) box.textContent = t || '— empty log —'
+    }).catch(() => {})
+    vpnStatus().then(s => { vpnActive = s }).catch(() => {})
+  }, 2500)
+}
+function stopLogPoll() { if (vpnLogTimer) { clearInterval(vpnLogTimer); vpnLogTimer = null } }
+
+/* ───────────────────────── SCAN / SYSTEM / SETTINGS ───────────────────────── */
 function soonContent(name: string): HTMLElement {
   const c = el('div', 'content')
   const s = el('div', 'soon')
@@ -150,23 +345,19 @@ function systemContent(): HTMLElement {
   c.appendChild(el('div', 'section-title', 'POWER'))
   const g = el('div', 'sys-grid')
   const items: [string, string, string][] = [
-    ['SUSPEND', '⏸', 'amber'],
-    ['RESTART', '↻', 'amber'],
-    ['SHUTDOWN', '⏻', 'danger'],
-    ['POWER OFF', '⊘', 'danger'],
+    ['SUSPEND', '⏸', 'amber'], ['RESTART', '↻', 'amber'],
+    ['SHUTDOWN', '⏻', 'danger'], ['POWER OFF', '⊘', 'danger'],
   ]
   for (const [label, ico, cls] of items) {
     const b = el('button', `sys-btn ${cls}`)
     b.tabIndex = 0
     b.innerHTML = `<span class="ico">${ico}</span>${label}`
-    b.title = 'wired in M4'
     g.appendChild(b)
   }
   c.appendChild(g)
   const s = el('div', 'soon')
-  s.innerHTML = `<div class="big">POWER <em>OFFLINE</em></div>wired in the next milestone`
-  s.style.flex = '0'
-  s.style.padding = '1em 0 0'
+  s.innerHTML = '<div class="big">POWER <em>OFFLINE</em></div>wired in the next milestone'
+  s.style.cssText = 'flex:0;padding:1em 0 0'
   c.appendChild(s)
   return c
 }
@@ -174,21 +365,18 @@ function systemContent(): HTMLElement {
 function footer(): HTMLElement {
   const f = el('footer', 'foot')
   f.innerHTML =
-    '<span><kbd>←→</kbd>switch</span>' +
-    '<span><kbd>Enter</kbd>open</span>' +
-    '<span><kbd>Esc</kbd>menu</span>'
+    '<span><kbd>←→</kbd>switch</span><span><kbd>Tab</kbd>focus</span>' +
+    '<span><kbd>Enter</kbd>open</span><span><kbd>Esc</kbd>menu</span>'
   return f
 }
 
 function escMenu(): HTMLElement {
-  const m = el('div', 'esc-menu')
-  m.id = 'esc-menu'
+  const m = el('div', 'esc-menu'); m.id = 'esc-menu'
   const box = el('div', 'box')
   box.appendChild(el('div', 'title', 'STANDBY MENU'))
   const mk = (label: string, action: 'desktop' | 'hide' | 'exit', cls = '') => {
     const b = el('button', `btn ${cls}`)
-    b.tabIndex = 0
-    b.textContent = label
+    b.tabIndex = 0; b.textContent = label
     b.addEventListener('click', () => doExit(action))
     return b
   }
@@ -201,8 +389,7 @@ function escMenu(): HTMLElement {
 }
 
 function overlay(): HTMLElement {
-  const o = el('div', 'overlay')
-  o.id = 'overlay'
+  const o = el('div', 'overlay'); o.id = 'overlay'
   const cv = document.createElement('canvas')
   o.appendChild(cv)
   const s = el('div', 'standby')
@@ -211,35 +398,48 @@ function overlay(): HTMLElement {
   return o
 }
 
+/* ───────────────────────── render ───────────────────────── */
 function render() {
   app.innerHTML = ''
   app.appendChild(header(lastNet))
-  app.appendChild(nav(screen))
+  app.appendChild(nav())
   if (screen === 'home') app.appendChild(homeContent(lastNet))
-  else if (screen === 'vpn') app.appendChild(soonContent('VPN'))
-  else if (screen === 'scan') app.appendChild(soonContent('SCAN'))
+  else if (screen === 'vpn') app.appendChild(vpnContent())
+  else if (screen === 'scan') {
+    const holder = el('div', 'content scan-holder')
+    app.appendChild(holder)
+    scanHandle = mountScan(holder)
+  }
   else if (screen === 'system') app.appendChild(systemContent())
   else app.appendChild(soonContent('SETTINGS'))
   app.appendChild(footer())
   app.appendChild(escMenu())
   app.appendChild(overlay())
-  if (escOpen) {
-    const m = document.getElementById('esc-menu')!
-    m.classList.add('open')
-    ;(m.querySelector('button') as HTMLButtonElement)?.focus()
-  }
+  if (escOpen) document.getElementById('esc-menu')!.classList.add('open')
 }
 
-/* ────────────────────────── state ────────────────────────── */
+function focusFirst(which: 'nav' | 'vpn') {
+  const root = which === 'nav' ? app.querySelector('.nav') : app.querySelector('.content')
+  const first = root?.querySelector<HTMLElement>('button, input, textarea, [tabindex="0"]')
+  first?.focus()
+}
 
+/* ───────────────────────── state ───────────────────────── */
 function go(s: Screen) {
+  const prev = screen
   screen = s
+  if (prev === 'scan') { scanHandle?.destroy(); scanHandle = null }
   render()
+  if (s === 'vpn') { refreshVpn(); startLogPoll(); focusFirst('vpn') }
+  if (prev === 'vpn') stopLogPoll()
+  if (s === 'system' || s === 'settings') {
+    const first = app.querySelector<HTMLElement>('.content button, .content [tabindex="0"]')
+    first?.focus()
+  }
 }
 
 async function doExit(action: 'desktop' | 'hide' | 'exit') {
   await exitApp(action)
-  /* browser closes within moments; leave a farewell frame */
   if (action === 'hide') {
     app.innerHTML = ''
     const s = el('div', 'soon')
@@ -256,66 +456,78 @@ async function doExit(action: 'desktop' | 'hide' | 'exit') {
 function toggleEsc(force?: boolean) {
   escOpen = force ?? !escOpen
   render()
+  if (escOpen) {
+    const b = document.querySelector<HTMLElement>('#esc-menu .box .btn')
+    b?.focus()
+  }
 }
 
-/* ────────────────────────── keyboard ────────────────────────── */
-
-function focusFirstInteractive(root: HTMLElement): void {
-  const first = root.querySelector<HTMLElement>(
-    'button, [tabindex="0"], a',
-  )
-  first?.focus()
+/* ───────────────────────── keyboard ───────────────────────── */
+function focusables(root: HTMLElement): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(
+    'button:not([disabled]), input, textarea, a, [tabindex="0"]',
+  ))
 }
 
 document.addEventListener('keydown', (e: KeyboardEvent) => {
+  if (document.getElementById('sudo-modal')) return /* modal owns keys */
   if (escOpen) {
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      toggleEsc(false)
-    }
+    if (e.key === 'Escape') { e.preventDefault(); toggleEsc(false) }
     return
   }
-  if (e.key === 'Escape') {
-    e.preventDefault()
-    toggleEsc(true)
-    return
-  }
+  if (e.key === 'Escape') { e.preventDefault(); toggleEsc(true); return }
+
   const t = e.target as HTMLElement | null
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
-    return /* text entry wins over nav */
+    return /* typing wins */
   }
+
+  /* arrow nav: if a control is focused, move between controls in the screen */
+  if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' ||
+       e.key === 'ArrowLeft' || e.key === 'ArrowUp') && t && t !== document.body) {
+    const list = focusables(app)
+    const idx = list.indexOf(t)
+    if (idx !== -1) {
+      e.preventDefault()
+      const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1
+      const next = list[idx + dir] ?? list[0]
+      ;(list[(idx + dir + list.length) % list.length] ?? next)?.focus()
+      return
+    }
+  }
+
   if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
     e.preventDefault()
     const d = e.key === 'ArrowRight' ? 1 : -1
     go(ORDER[(ORDER.indexOf(screen) + d + ORDER.length) % ORDER.length])
-    focusFirstInteractive(app)
   }
 })
 
-/* ────────────────────────── data loop ────────────────────────── */
-
+/* ───────────────────────── data loop ───────────────────────── */
 async function refresh() {
   try {
     const net = await fetchNet()
     const first = !lastNet
     lastNet = net
-    render()
-    if (first) focusFirstInteractive(app)
-  } catch {
-    /* backend still booting; retry next tick */
-  }
+    /* don't re-render while the user is on the VPN screen — the 2.5s
+       log poller updates that view in place; a full re-render would
+       wipe typed config text and steal focus */
+    if (screen !== 'vpn') render()
+    if (first) {
+      const first = app.querySelector<HTMLElement>('.nav .tile')
+      first?.focus()
+      toolsCheck().then(t => { vpnOpenvpnInstalled = t?.openvpn?.installed ?? null })
+        .catch(() => { vpnOpenvpnInstalled = null })
+    }
+  } catch { /* backend still booting */ }
 }
 
 function tickClock() {
   const c = document.getElementById('clock')
   if (!c) return
   const d = new Date()
-  const hh = String(d.getHours()).padStart(2, '0')
-  const mm = String(d.getMinutes()).padStart(2, '0')
-  c.innerHTML = `TIME <b>${hh}:${mm}</b>`
+  c.innerHTML = `TIME <b>${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}</b>`
 }
-
-/* ────────────────────────── boot ────────────────────────── */
 
 render()
 refresh()
