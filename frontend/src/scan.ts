@@ -169,6 +169,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
       })
       if (!r.ok) throw new Error((await r.json()).detail || 'start failed')
       currentJob = await r.json() as ScanState
+      lastState = currentJob
       jobStarted = true
       phase = 'scan'
       liveLog = []
@@ -188,6 +189,12 @@ export function mountScan(container: HTMLElement): ScanHandle {
       if (msg.type === 'line') {
         liveLog.push(`[${msg.stage}] ${msg.line}`)
         if (liveLog.length > 400) liveLog = liveLog.slice(-400)
+        /* stage change -> refresh progress bar */
+        const idx: Record<string, number> = { discovery: 0, ports: 1, deep: 2 }
+        if (lastState && msg.stage in idx && idx[msg.stage] !== lastState.stage_index) {
+          lastState = { ...lastState, stage: msg.stage, stage_index: idx[msg.stage] }
+          render()
+        }
         const box = root.querySelector('.scan-log')
         if (box) {
           box.textContent = liveLog.slice(-120).join('\n')
@@ -196,8 +203,9 @@ export function mountScan(container: HTMLElement): ScanHandle {
       } else if (msg.type === 'state') {
         lastState = msg.state
         currentJob = msg.state
-        if (msg.state.status === 'done' || msg.state.status === 'error'
-            || msg.state.status === 'cancelled') {
+        if (msg.state.status === 'running' || msg.state.status === 'pending') {
+          if (phase === 'scan') render()
+        } else {
           phase = 'results'
           jobStarted = false
           ws?.close()

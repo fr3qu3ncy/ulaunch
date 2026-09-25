@@ -240,21 +240,25 @@ async def scan_ws(ws: WebSocket, job_id: str):
     if not job:
         await ws.close(code=4004)
         return
+    await ws.accept()
     q = job.subscribe()
+    import queue as _queue
     try:
         await ws.send_text(_json.dumps({
             "type": "state", "state": scanner._public(job),
         }))
         while True:
             try:
-                stage, line = await asyncio.wait_for(q.get(), timeout=1.0)
+                stage, line = q.get_nowait()
                 await ws.send_text(_json.dumps(
                     {"type": "line", "stage": stage, "line": line}))
-            except asyncio.TimeoutError:
-                if job.status in ("done", "error", "cancelled"):
-                    await ws.send_text(_json.dumps(
-                        {"type": "state", "state": scanner._public(job)}))
-                    break
+                continue
+            except _queue.Empty:
+                await asyncio.sleep(0.2)
+            if job.status in ("done", "error", "cancelled"):
+                await ws.send_text(_json.dumps(
+                    {"type": "state", "state": scanner._public(job)}))
+                break
     except WebSocketDisconnect:
         pass
     finally:
