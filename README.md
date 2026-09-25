@@ -67,6 +67,7 @@ backend/
   vpn.py        openvpn presets, connect/disconnect, log tail
   scanner.py    staged nmap engine, WebSocket progress streaming
   system.py     suspend/restart/shutdown via systemd
+  settings.py   idle timeout + scan defaults (~/.ulaunch/settings.json)
   sudo.py       in-app sudo prompt (sudo -S, session-cached)
   static/       **prebuilt frontend (committed — no node needed on-device)**
 frontend/
@@ -77,7 +78,8 @@ ulaunch         entrypoint: server + kiosk browser + clean shutdown
 install.sh      venv + python deps + tool probe + desktop icon (no node)
 ```
 
-State lives in `~/.ulaunch/` (vpn presets, scan history, settings, run pids).
+State lives in `~/.ulaunch/` (vpn presets + logs, settings.json, run pids).
+Scan jobs are in-memory — re-run a scan after a server restart.
 
 ## Config
 
