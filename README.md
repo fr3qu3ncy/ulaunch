@@ -5,7 +5,8 @@ system power controls in one fast, keyboard-first app.
 
 - 1280x720 uConsole screen (works on any resolution)
 - Black background, neon cyan/magenta/green, big type (Orbitron/Rajdhani)
-- Full keyboard + mouse navigation: arrows/Tab switch, Enter activates, Esc menu
+- Full keyboard + mouse navigation: ←→ move, Enter drops into a tool,
+  Backspace exits, Esc menu
 - Local-only: server on 127.0.0.1, nothing exposed
 
 ## Stack
@@ -55,8 +56,22 @@ git commit -am "rebuild frontend"
 
 - `./ulaunch` or the ULAUNCH desktop icon — starts server + kiosk browser
 - **Esc** opens the quick menu: Back to Desktop / Minimise / Exit
-- Arrows or Tab switch sections, Enter activates
 - Idle screensaver (Matrix) after a configurable timeout (default 60s)
+
+### Keyboard model
+
+Two levels — the tool row and the tool:
+
+| Where        | ← / →                    | Enter            | Backspace                |
+|--------------|--------------------------|------------------|--------------------------|
+| tool row (logo + tiles) | move between tools (wraps) | **drop into the tool** — focus lands on its first control | — |
+| inside a tool | move through the tool's own options (wraps) | activate the focused option | **exit the tool** — focus returns to its tile |
+
+Tab/Shift+Tab work too (same in-tool cycle, wrapping). Inside text-entry
+fields, arrows/Backspace keep their native meaning (caret, editing) — Tab
+is the way to the next control. The 15s network auto-refresh updates only
+the live header stats on VPN/SCAN — it never re-renders the screen or
+steals focus.
 
 ## Layout
 

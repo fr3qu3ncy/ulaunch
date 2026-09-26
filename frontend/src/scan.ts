@@ -206,7 +206,16 @@ export function mountScan(container: HTMLElement): ScanHandle {
 
   async function startScan() {
     if (jobStarted) return
-    if (nmapInstalled === false) { alert('nmap is not installed — press INSTALL NMAP first'); return }
+    /* resolve a pending nmap check first — otherwise a START pressed
+       before the initial /api/tools round-trip slips past the guard */
+    await ensureNmapCheck()
+    if (nmapInstalled === false) {
+      /* focus the install button so the user is right on it */
+      const inst = root.querySelector<HTMLElement>('[data-fk="install"]')
+      if (inst) { inst.focus(); return }
+      alert('nmap is not installed — press INSTALL NMAP first')
+      return
+    }
     const opt = options[selIndex]
     if (!opt) return
     try {
@@ -323,6 +332,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
     const row = el('div', 'btn-row')
     const cancel = el('button', 'btn danger', '■ CANCEL')
     cancel.tabIndex = 0
+    cancel.dataset.fk = 'cancel'
     cancel.addEventListener('click', async () => {
       if (!currentJob) return
       cancel.disabled = true
@@ -372,8 +382,32 @@ export function mountScan(container: HTMLElement): ScanHandle {
     }
 
     const row = el('div', 'btn-row')
+    if (nmapInstalled === false) {
+      /* the scan died on the missing-nmap error: give the install
+         button right here, next to NEW SCAN */
+      const inst = el('button', 'btn active', 'INSTALL NMAP')
+      inst.tabIndex = 0
+      inst.dataset.fk = 'install'
+      inst.addEventListener('click', () => {
+        inst.disabled = true; inst.textContent = 'installing…'
+        fetch('/api/tools/install', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tool: 'nmap' }),
+        }).then(async r => {
+          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `install failed (${r.status})`)
+          nmapInstalled = true
+          render()
+        }).catch(e => {
+          inst.disabled = false; inst.textContent = 'INSTALL NMAP'
+          alert(String(e.message || e))
+        })
+      })
+      row.appendChild(inst)
+    }
     const again = el('button', 'btn active', '↻ NEW SCAN')
     again.tabIndex = 0
+    again.dataset.fk = 'newscan'
     again.addEventListener('click', () => {
       phase = 'pick'
       lastState = null
@@ -434,6 +468,16 @@ export function mountScan(container: HTMLElement): ScanHandle {
     nmapInstalled = t?.nmap?.installed === true
     if (phase === 'pick') render()
   }).catch(() => { nmapInstalled = true /* assume ok if backend unreachable */ })
+
+  /* re-check nmap on demand (e.g. after an install) so a stale banner
+     disappears without a remount */
+  function ensureNmapCheck(): Promise<void> {
+    if (nmapInstalled !== null) return Promise.resolve()
+    return fetch('/api/tools').then(r => r.ok ? r.json() : null).then(t => {
+      nmapInstalled = t?.nmap?.installed === true
+      if (phase === 'pick') render()
+    }).catch(() => { nmapInstalled = true })
+  }
 
   /* apply saved scan defaults */
   fetch('/api/settings').then(r => r.ok ? r.json() : null).then(st => {

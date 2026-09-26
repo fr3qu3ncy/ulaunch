@@ -119,16 +119,19 @@ function header(net: NetInfo | null): HTMLElement {
   h.appendChild(el('div', 'spacer'))
   if (net) {
     const vpn = el('div', `stat ${net.vpn.active ? 'ok' : ''}`)
+    vpn.dataset.fk = 'stat:vpn'
     vpn.innerHTML = net.vpn.active
       ? `VPN <b>● CONNECTED</b>${net.vpn.interfaces[0] ? ` ${net.vpn.interfaces[0]}` : ''}`
       : 'VPN <b>○ OFFLINE</b>'
     h.appendChild(vpn)
     const bat = el('div', 'stat')
+    bat.dataset.fk = 'stat:bat'
     bat.innerHTML = net.battery
       ? `BAT <b>${net.battery.percent}%${net.battery.charging ? ' ⚡' : ''}</b>`
       : 'BAT <b>AC</b>'
     h.appendChild(bat)
     const up = el('div', 'stat')
+    up.dataset.fk = 'stat:up'
     up.innerHTML = `UP <b>${fmtUptime(net.uptime_s)}</b>`
     h.appendChild(up)
     const clk = el('div', 'stat'); clk.id = 'clock'
@@ -218,6 +221,7 @@ function vpnRow(p: Preset, active: boolean): HTMLElement {
   const act = el('button', `btn ${active ? 'danger' : ''}`)
   act.textContent = active ? 'DISCONNECT' : 'CONNECT'
   act.tabIndex = 0
+  act.dataset.fk = `vpn:${p.name}:act`
   act.addEventListener('click', () => {
     act.disabled = true
     act.textContent = '…'
@@ -229,6 +233,7 @@ function vpnRow(p: Preset, active: boolean): HTMLElement {
   btns.appendChild(act)
   const del = el('button', 'btn small', '✕')
   del.tabIndex = 0
+  del.dataset.fk = `vpn:${p.name}:del`
   del.title = 'delete preset'
   del.addEventListener('click', () => {
     if (!confirm(`Delete preset "${p.name}"?`)) return
@@ -245,14 +250,19 @@ function vpnAddForm(): HTMLElement {
   wrap.appendChild(title)
   const name = el('input', 'text-input')
   name.type = 'text'; name.placeholder = 'preset name (e.g. work)'
+  name.dataset.fk = 'vpnadd:name'
+  name.tabIndex = 0
   wrap.appendChild(name)
   const cfg = el('textarea', 'text-input config-ta')
   cfg.placeholder = 'paste the full OpenVPN config (.ovpn) here…'
+  cfg.dataset.fk = 'vpnadd:cfg'
+  cfg.tabIndex = 0
   wrap.appendChild(cfg)
   const row = el('div', 'btn-row')
   const err = el('div', 'form-err')
   const save = el('button', 'btn active', 'SAVE')
   save.tabIndex = 0
+  save.dataset.fk = 'vpnadd:save'
   save.addEventListener('click', () => {
     err.textContent = ''
     if (!name.value.trim()) { err.textContent = 'name required'; return }
@@ -288,6 +298,7 @@ function vpnContent(): HTMLElement {
     tb.innerHTML = `<span>⚠ openvpn not installed</span>`
     const inst = el('button', 'btn active', 'INSTALL')
     inst.tabIndex = 0
+    inst.dataset.fk = 'openvpn:install'
     inst.addEventListener('click', () => {
       inst.disabled = true; inst.textContent = 'installing…'
       api(() => toolsInstall('openvpn'))
@@ -347,6 +358,7 @@ function systemContent(): HTMLElement {
   for (const [action, label, ico, cls] of items) {
     const b = el('button', `sys-btn ${cls}`)
     b.tabIndex = 0
+    b.dataset.fk = `sys:${action}`
     b.innerHTML = `<span class="ico">${ico}</span>${label}`
     b.addEventListener('click', () => doPower(action, label, b))
     g.appendChild(b)
@@ -384,6 +396,8 @@ function settingsContent(): HTMLElement {
   const idleRow = el('div', 'setting-row')
   idleRow.appendChild(el('span', 'setting-label', 'IDLE TIMEOUT'))
   const sel = el('select', 'select-input')
+  sel.tabIndex = 0
+  sel.dataset.fk = 'set:idle'
   for (const s of [15, 30, 60, 120, 300, 600]) {
     const o = el('option'); o.value = String(s); o.textContent = s < 60 ? `${s} seconds` : `${Math.round(s / 60)} minute${s >= 120 ? 's' : ''}`
     sel.appendChild(o)
@@ -409,6 +423,8 @@ function settingsContent(): HTMLElement {
     const cb = el('input', 'check-input')
     cb.type = 'checkbox'
     cb.id = `flag-${key}`
+    cb.dataset.fk = `set:${key}`
+    cb.tabIndex = 0
     cb.addEventListener('change', async () => {
       try {
         await putSettings({ scan_flags: { [key]: cb.checked } })
@@ -458,8 +474,8 @@ function flashSaved(c: HTMLElement) {
 function footer(): HTMLElement {
   const f = el('footer', 'foot')
   f.innerHTML =
-    '<span><kbd>←→</kbd>switch</span><span><kbd>Tab</kbd>focus</span>' +
-    '<span><kbd>Enter</kbd>open</span><span><kbd>⌫</kbd>back</span>' +
+    '<span><kbd>←→</kbd>move</span><span><kbd>Enter</kbd>open tool</span>' +
+    '<span><kbd>←→</kbd>/<kbd>Tab</kbd>in tool</span><span><kbd>⌫</kbd>back</span>' +
     '<span><kbd>Esc</kbd>menu</span>'
   return f
 }
@@ -514,15 +530,21 @@ function render() {
 }
 
 /* ───────────────────────── state ───────────────────────── */
-/* two-level keyboard navigation. The tool ROW is the primary surface:
-   Tab lands on the active tile, arrows move between tools, and the next
-   Tab drops into that tool's first control. Once inside a tool, Tab and
-   arrows stay within the tool (never resetting to the logo). */
+/* Keyboard model (two levels):
+   TOOL ROW (logo + tiles):  ←/→ move between tools, Enter drops into the
+     tool under the cursor (focus lands on its first control).
+   INSIDE A TOOL:            ←/→ (and ↑/↓) cycle the tool's own controls in
+     DOM order — this is how you walk the options.
+                             Backspace exits the tool: focus returns to its
+                             tile in the row.
+                             Tab/Shift+Tab still work (same cycle, wrapping).
+   Anywhere else (body after a re-render, no active control): ←/→ hop tools,
+     Enter opens the active tool. */
 function activeTile(): HTMLElement | null {
   return app.querySelector<HTMLElement>('.nav .tile.active')
 }
 function focusContentFirst(): void {
-  const first = app.querySelector<HTMLElement>('.content button, .content input, .content [tabindex="0"]')
+  const first = app.querySelector<HTMLElement>('.content button:not([disabled]), .content input, .content select, .content textarea, .content [tabindex="0"]')
   first?.focus()
 }
 
@@ -534,9 +556,8 @@ async function go(s: Screen) {
   if (s === 'vpn') { await refreshVpn(); startLogPoll() }
   if (prev === 'vpn') stopLogPoll()
   /* drop focus into the tool (its first control) so the user is in the
-     tool they picked and Tab progresses from there, not the logo.
-     For SCAN the options load async — mountScan owns the initial focus
-     (focuses the first option once they arrive). */
+     tool they picked. For SCAN the options load async — mountScan owns
+     the initial focus (focuses the first option once they arrive). */
   if (s === 'home') app.querySelector<HTMLElement>('.logo')?.focus()
   else if (s !== 'scan') focusContentFirst()
 }
@@ -568,8 +589,56 @@ function toggleEsc(force?: boolean) {
 /* ───────────────────────── keyboard ───────────────────────── */
 function focusables(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>(
-    'button:not([disabled]), input, textarea, a, [tabindex="0"]',
+    'button:not([disabled]), input, select, textarea, a, [tabindex="0"]',
   ))
+}
+/* Text-entry fields that own the arrow keys and Backspace natively
+   (caret movement, value changes, editing). Navigation must not eat
+   those keystrokes. Buttons, checkboxes, selects and [tabindex]
+   controls do NOT own arrows/Backspace the same way, so the app
+   drives them. */
+function isTextInput(t: HTMLElement | null): boolean {
+  if (!t) return false
+  if (t.tagName === 'TEXTAREA' || t.isContentEditable) return true
+  if (t.tagName === 'INPUT') {
+    const ty = ((t as HTMLInputElement).type || 'text').toLowerCase()
+    return !['checkbox', 'radio'].includes(ty)
+  }
+  return false
+}
+
+/* the tool row: logo first, then the four tiles, in order */
+function rowEl(): HTMLElement[] {
+  return [
+    app.querySelector<HTMLElement>('.logo')!,
+    ...Array.from(app.querySelectorAll<HTMLElement>('.nav .tile')),
+  ]
+}
+function onRow(t: HTMLElement | null): number {
+  if (!t) return -1
+  return rowEl().indexOf(t)
+}
+/* cycle focus within the tool's content: idx + dir, wrapping. Returns the
+   element that got focus (null if content is empty). */
+function stepInContent(dir: 1 | -1): HTMLElement | null {
+  const content = app.querySelector<HTMLElement>('.content')
+  if (!content) return null
+  const list = focusables(content)
+  if (!list.length) return null
+  const ae = document.activeElement as HTMLElement | null
+  const idx = ae ? list.indexOf(ae) : -1
+  const next = idx < 0
+    ? (dir === 1 ? 0 : list.length - 1)
+    : (idx + dir + list.length) % list.length
+  list[next].focus()
+  return list[next]
+}
+/* Enter on the tool row: drop into the tool under the cursor. */
+function enterTool(t: HTMLElement): void {
+  if (t.classList.contains('logo')) { void go('home'); return }
+  const s = t.dataset.screen as Screen
+  if (s && s !== screen) void go(s)
+  else focusContentFirst()
 }
 
 document.addEventListener('keydown', (e: KeyboardEvent) => {
@@ -581,81 +650,114 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   if (e.key === 'Escape') { e.preventDefault(); toggleEsc(true); return }
 
   const t = e.target as HTMLElement | null
-  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
-    return /* typing wins */
+  const content = app.querySelector<HTMLElement>('.content')
+  const inContent = t && t !== document.body && content?.contains(t)
+
+  /* Tab: next/previous control within the tool. This is also the reliable
+     way OUT of a text input (arrows move the caret, Backspace edits), so
+     it must work from every control type. On the tool row, Tab moves
+     between tiles like the arrows. */
+  if (e.key === 'Tab') {
+    if (inContent) {
+      e.preventDefault()
+      stepInContent(e.shiftKey ? -1 : 1)
+      return
+    }
+    const idx = onRow(t)
+    if (idx >= 0) {
+      e.preventDefault()
+      const d = e.shiftKey ? -1 : 1
+      rowEl()[(idx + d + rowEl().length) % rowEl().length]?.focus()
+    }
+    return
   }
 
   /* Backspace: exit the current tool — focus returns to its tile in the
-     tool row. (Inputs are excluded above, so it never eats keystrokes.) */
+     row. Never inside a text-entry field (it edits there). A <select> has
+     no native Backspace behaviour, so exiting works there too. */
   if (e.key === 'Backspace') {
-    const content = app.querySelector<HTMLElement>('.content')
     if (screen !== 'home' &&
-        (t === null || t === document.body || content?.contains(t))) {
+        (t === null || t === document.body || inContent) &&
+        !isTextInput(t)) {
       e.preventDefault()
       activeTile()?.focus()
       return
     }
+    return
+  }
+
+  if (e.key === 'Enter') {
+    const idx = onRow(t)
+    if (idx >= 0) {
+      e.preventDefault()
+      enterTool(t as HTMLElement)
+      return
+    }
+    /* elsewhere: let the control's own click/activate happen natively */
+    return
   }
 
   const isArrow = (e.key === 'ArrowRight' || e.key === 'ArrowLeft' ||
                    e.key === 'ArrowUp' || e.key === 'ArrowDown')
-  if (isArrow) {
-    const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1
-    /* on the tool row (logo or a tile): arrows move between tools */
-    if (t && (t.classList.contains('logo') || t.classList.contains('tile'))) {
-      e.preventDefault()
-      const row = [
-        app.querySelector<HTMLElement>('.logo')!,
-        ...Array.from(app.querySelectorAll<HTMLElement>('.nav .tile')),
-      ]
-      const idx = row.indexOf(t)
-      row[(idx + dir + row.length) % row.length]?.focus()
-      return
-    }
-    /* anywhere else (inside a tool's content, or body after a re-render):
-       arrows cycle between tools/screens. This is the way to hop between
-       tools without re-entering the nav row. */
-    e.preventDefault()
-    const target = ORDER[(ORDER.indexOf(screen) + dir + ORDER.length) % ORDER.length]
-    void go(target)
+  if (!isArrow) return
+  /* text-entry fields and selects own the arrows natively (caret, value) */
+  if (isTextInput(t) || t?.tagName === 'SELECT') return
+  const dir: 1 | -1 = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1
+  e.preventDefault()
+
+  const idx = onRow(t)
+  if (idx >= 0) {
+    /* on the tool row: ←/→ move between tools (wrapping) */
+    rowEl()[(idx + dir + rowEl().length) % rowEl().length]?.focus()
     return
   }
 
-  /* Tab: once inside a tool, Tab/Shift+Tab cycle within that tool's
-     controls only (native Tab would escape back to the logo). */
-  if (e.key === 'Tab') {
-    const content = app.querySelector<HTMLElement>('.content')
-    if (t && t !== document.body && content?.contains(t)) {
-      e.preventDefault()
-      const list = focusables(content)
-      if (list.length) {
-        const idx = list.indexOf(t)
-        if (e.shiftKey) {
-          /* Shift+Tab walks back through the tool, wrapping to its end */
-          list[(idx - 1 + list.length) % list.length]?.focus()
-        } else {
-          /* forward Tab walks through the tool; from the LAST control it
-             exits back to the active tile (the way out, like '← back') */
-          if (idx === list.length - 1) activeTile()?.focus()
-          else list[idx + 1]?.focus()
-        }
-      }
-      return
-    }
+  if (screen !== 'home' && content && (t === null || t === document.body || content.contains(t))) {
+    /* inside a tool: ←/→ (and ↑/↓) cycle the tool's own controls —
+       this is the way to navigate a tool's options. */
+    stepInContent(dir)
+    return
   }
+
+  /* anywhere else (body after a re-render, home): ←/→ hop tools */
+  const target = ORDER[(ORDER.indexOf(screen) + dir + ORDER.length) % ORDER.length]
+  void go(target)
 })
 
 /* ───────────────────────── data loop ───────────────────────── */
+/* In-place update of the live header stats (VPN / BAT / UP) without
+   touching the content area — the content of the VPN and SCAN screens
+   updates itself (log poller / WebSocket) and must never be re-rendered
+   from here: that would wipe typed config or the live scan and steal
+   keyboard focus. */
+function refreshHeaderStats(net: NetInfo) {
+  const vpn = app.querySelector<HTMLElement>('[data-fk="stat:vpn"]')
+  if (vpn) {
+    vpn.classList.toggle('ok', net.vpn.active)
+    vpn.innerHTML = net.vpn.active
+      ? `VPN <b>● CONNECTED</b>${net.vpn.interfaces[0] ? ` ${net.vpn.interfaces[0]}` : ''}`
+      : 'VPN <b>○ OFFLINE</b>'
+  }
+  const bat = app.querySelector<HTMLElement>('[data-fk="stat:bat"]')
+  if (bat) bat.innerHTML = net.battery
+    ? `BAT <b>${net.battery.percent}%${net.battery.charging ? ' ⚡' : ''}</b>`
+    : 'BAT <b>AC</b>'
+  const up = app.querySelector<HTMLElement>('[data-fk="stat:up"]')
+  if (up) up.innerHTML = `UP <b>${fmtUptime(net.uptime_s)}</b>`
+}
+
 async function refresh() {
   try {
     const net = await fetchNet()
     const first = !lastNet
     lastNet = net
-    /* don't re-render while the user is on VPN or SCAN — the VPN log
-       poller updates that view in place and the SCAN view owns a live
-       WebSocket; a full re-render would wipe typed config / the live
-       scan and steal focus */
-    if (screen !== 'vpn' && screen !== 'scan') render()
+    if (screen === 'vpn' || screen === 'scan') {
+      /* update only the items that need it — the live header stats. The
+         tool's own content is handled by its poller/WebSocket. */
+      refreshHeaderStats(net)
+    } else {
+      render()
+    }
     if (first) {
       const first = app.querySelector<HTMLElement>('.nav .tile')
       first?.focus()

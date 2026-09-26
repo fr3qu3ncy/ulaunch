@@ -252,6 +252,11 @@ def scan_job(job_id: str) -> dict:
 
 @app.post("/api/scan/start")
 def scan_start(payload: dict) -> dict:
+    # pre-check: a job with no nmap would just die on stage 1 — fail fast
+    # with a clear message (the UI offers the install button)
+    if shutil.which("nmap") is None:
+        raise HTTPException(
+            400, "nmap is not installed — use the INSTALL NMAP button on the SCAN screen")
     subnet = (payload or {}).get("subnet", "")
     iface = (payload or {}).get("interface", "")
     flags = (payload or {}).get("flags", {}) or {}
