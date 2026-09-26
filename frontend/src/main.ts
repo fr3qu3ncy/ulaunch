@@ -1,7 +1,7 @@
 import './styles.css'
 import {
   fetchNet, exitApp, fmtUptime, type NetInfo,
-  vpnPresets, vpnAddPreset, vpnDeletePreset, vpnStatus,
+  vpnPresets, vpnAddPreset, vpnDeletePreset, vpnSetCreds, vpnStatus,
   vpnConnect, vpnDisconnect, vpnLog,
   toolsCheck, toolsInstall,
   systemStatus, systemAction, getSettings, putSettings,
@@ -10,6 +10,7 @@ import {
 import { mountScan, type ScanHandle } from './scan'
 import * as overlay from './overlay'
 import { askSudo } from './sudo'
+import { askVpnCreds } from './vpnCreds'
 
 type Screen = 'home' | 'vpn' | 'scan' | 'system' | 'settings'
 
@@ -163,7 +164,9 @@ function vpnRow(p: Preset, active: boolean): HTMLElement {
   info.querySelector('.vpn-row-name')!.innerHTML =
     `<span class="dot ${active ? 'on' : ''}"></span> ${p.name}`
   const meta = el('div', 'vpn-row-meta')
-  meta.textContent = [p.proto || 'udp (default)', p.server, p.last_connected ? `last ${p.last_connected}` : 'never connected']
+  const credBit = p.has_creds ? (p.username ? `${p.username}` : 'credentials') : 'no credentials'
+  meta.textContent = [p.proto || 'udp (default)', p.server, credBit,
+    p.last_connected ? `last ${p.last_connected}` : 'never connected']
     .filter(Boolean).join(' · ')
   info.appendChild(meta)
   row.appendChild(info)
@@ -174,14 +177,24 @@ function vpnRow(p: Preset, active: boolean): HTMLElement {
   act.tabIndex = 0
   act.dataset.fk = `vpn:${p.name}:act`
   act.addEventListener('click', () => {
-    act.disabled = true
-    act.textContent = '…'
-    api(() => active ? vpnDisconnect() : vpnConnect(p.name))
-      .then(refreshVpn)
-      .catch(e => { act.textContent = active ? 'DISCONNECT' : 'CONNECT'; alert(String(e.message || e)) })
-      .finally(() => { act.disabled = false })
+    if (active) {
+      act.disabled = true
+      act.textContent = '…'
+      api(() => vpnDisconnect())
+        .then(refreshVpn)
+        .catch(e => { act.textContent = 'DISCONNECT'; alert(String(e.message || e)) })
+        .finally(() => { act.disabled = false })
+      return
+    }
+    void connectPreset(p, act)
   })
   btns.appendChild(act)
+  const cred = el('button', 'btn small', 'CRED')
+  cred.tabIndex = 0
+  cred.dataset.fk = `vpn:${p.name}:cred`
+  cred.title = 'set the VPN username & password for this preset'
+  cred.addEventListener('click', () => void setCred(p))
+  btns.appendChild(cred)
   const del = el('button', 'btn small', '✕')
   del.tabIndex = 0
   del.dataset.fk = `vpn:${p.name}:del`
@@ -193,6 +206,55 @@ function vpnRow(p: Preset, active: boolean): HTMLElement {
   btns.appendChild(del)
   row.appendChild(btns)
   return row
+}
+
+async function connectPreset(p: Preset, act: HTMLButtonElement) {
+  act.disabled = true
+  act.textContent = '…'
+  try {
+    /* first connect without a stored login: prompt, save, then connect */
+    if (!p.has_creds) {
+      const c = await askVpnCreds(
+        p.name,
+        'Enter the OpenVPN username and password for this connection. '
+        + 'They are stored on this device only and used each time you connect.',
+      )
+      if (!c) { act.textContent = 'CONNECT'; return }
+      try {
+        await vpnSetCreds(p.name, c.username, c.password)
+        /* reflect the newly-saved login in the row even if the connect
+           below then fails (e.g. openvpn not installed yet) */
+        await refreshVpn()
+      } catch (e: any) {
+        act.textContent = 'CONNECT'
+        alert(`could not save credentials: ${e?.message || e}`)
+        return
+      }
+    }
+    await api(() => vpnConnect(p.name))
+    await refreshVpn()
+  } catch (e: any) {
+    act.textContent = 'CONNECT'
+    alert(String(e?.message || e))
+  } finally {
+    act.disabled = false
+  }
+}
+
+async function setCred(p: Preset) {
+  const c = await askVpnCreds(
+    p.name,
+    'Set the OpenVPN username and password for this preset. '
+    + 'They are stored on this device only.',
+    p.username || undefined,
+  )
+  if (!c) return
+  try {
+    await vpnSetCreds(p.name, c.username, c.password)
+    await refreshVpn()
+  } catch (e: any) {
+    alert(`could not save credentials: ${e?.message || e}`)
+  }
 }
 
 function vpnAddForm(): HTMLElement {
@@ -209,6 +271,19 @@ function vpnAddForm(): HTMLElement {
   cfg.dataset.fk = 'vpnadd:cfg'
   cfg.tabIndex = 0
   wrap.appendChild(cfg)
+  const credLabel = el('div', 'section-title', 'VPN LOGIN')
+  credLabel.style.marginTop = '0.4em'
+  wrap.appendChild(credLabel)
+  const user = el('input', 'text-input')
+  user.type = 'text'; user.placeholder = 'username (optional — you can enter it on first connect)'
+  user.dataset.fk = 'vpnadd:user'
+  user.tabIndex = 0
+  wrap.appendChild(user)
+  const pw = el('input', 'text-input')
+  pw.type = 'password'; pw.autocomplete = 'off'; pw.placeholder = 'password'
+  pw.dataset.fk = 'vpnadd:pw'
+  pw.tabIndex = 0
+  wrap.appendChild(pw)
   const row = el('div', 'btn-row')
   const err = el('div', 'form-err')
   const save = el('button', 'btn active', 'SAVE')
@@ -217,8 +292,9 @@ function vpnAddForm(): HTMLElement {
   save.addEventListener('click', () => {
     err.textContent = ''
     if (!name.value.trim()) { err.textContent = 'name required'; return }
-    vpnAddPreset(name.value.trim(), cfg.value)
-      .then(() => { name.value = ''; cfg.value = ''; refreshVpn() })
+    vpnAddPreset(name.value.trim(), cfg.value,
+      user.value.trim(), pw.value)
+      .then(() => { name.value = ''; cfg.value = ''; user.value = ''; pw.value = ''; refreshVpn() })
       .catch(e => { err.textContent = String(e.message || e) })
   })
   row.appendChild(save)
@@ -680,7 +756,8 @@ function resultsArrow(dir: 1 | -1, card: HTMLElement, content: HTMLElement | nul
 }
 
 document.addEventListener('keydown', (e: KeyboardEvent) => {
-  if (document.getElementById('sudo-modal')) return /* modal owns keys */
+  if (document.getElementById('sudo-modal') ||
+      document.getElementById('creds-modal')) return /* modal owns keys */
 
   /* ── standby (Esc) menu: arrows/Tab move between its buttons ── */
   if (escOpen) {

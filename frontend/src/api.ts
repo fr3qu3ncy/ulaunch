@@ -41,6 +41,8 @@ export interface Preset {
   name: string
   server: string | null
   proto: string | null
+  username: string | null
+  has_creds: boolean
   created: string | null
   last_connected: string | null
   size: number
@@ -73,8 +75,14 @@ export function vpnPresets(): Promise<Preset[]> {
   return getJSON<Preset[]>('/api/vpn/presets')
 }
 
-export function vpnAddPreset(name: string, config: string) {
-  return postJSON('/api/vpn/presets', { name, config })
+export function vpnAddPreset(name: string, config: string,
+  username?: string, password?: string) {
+  return postJSON('/api/vpn/presets', { name, config, username, password })
+}
+
+export function vpnSetCreds(name: string, username: string, password: string) {
+  return postJSON(`/api/vpn/presets/${encodeURIComponent(name)}/credentials`,
+    { username, password })
 }
 
 export function vpnDeletePreset(name: string): Promise<any> {

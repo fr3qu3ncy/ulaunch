@@ -145,7 +145,23 @@ def vpn_presets() -> list:
 @app.post("/api/vpn/presets")
 def vpn_preset_add(payload: dict) -> dict:
     try:
-        return vpn.save_preset(payload.get("name", ""), payload.get("config", ""))
+        return vpn.save_preset(
+            payload.get("name", ""), payload.get("config", ""),
+            username=(payload.get("username") or "").strip() or None,
+            password=(payload.get("password") or ""),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/vpn/presets/{name}/credentials")
+def vpn_preset_creds(name: str, payload: dict) -> dict:
+    try:
+        return vpn.set_credentials(
+            name,
+            (payload or {}).get("username", ""),
+            (payload or {}).get("password", ""),
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 
