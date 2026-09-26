@@ -137,6 +137,8 @@ html, body {
 .toggle:focus-visible,
 .btn:focus-visible,
 .sys-btn:focus-visible,
+.scan-host-card:focus-visible,
+.scan-host:focus-visible,
 .select-input:focus-visible,
 .check-input:focus-visible {
   outline: 3px dashed rgba(255, 255, 255, 0.9);
@@ -588,7 +590,7 @@ html, body {
   font-family: var(--font-display);
   font-size: 1.3em; font-weight: 700; margin-bottom: 0.5em;
 }
-.scan-host-card-ip .dim { color: var(--dim); font-size: 0.7em; font-weight: 500; }
+.scan-host-card-ip .dim { color: var(--dim); font-size: 1em; font-weight: 500; }
 
 .port-table { display: flex; flex-direction: column; gap: 0.3em; }
 .port-row {

@@ -691,6 +691,24 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   /* text-entry fields own the arrows natively (caret movement) */
   if (isTextInput(t)) return
 
+  /* scan results list: ↑/↓ move between the host cards and scroll them.
+     Clamped at the top; past the BOTTOM ↓, focus falls through to the
+     NEW SCAN button below the list. ←/→ (and Tab) keep cycling ALL
+     controls of the tool as before. */
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+      t && (t.classList.contains('scan-host-card') || t.classList.contains('scan-host'))) {
+    e.preventDefault()
+    const list = Array.from(content?.querySelectorAll<HTMLElement>('.scan-host-card, .scan-host') ?? [])
+    const i = list.indexOf(t)
+    const dirList: 1 | -1 = e.key === 'ArrowDown' ? 1 : -1
+    if (i >= 0 && i + dirList >= 0 && i + dirList < list.length) {
+      list[i + dirList].focus()
+    } else if (dirList === 1) {
+      content?.querySelector<HTMLElement>('[data-fk="newscan"]')?.focus()
+    }
+    return
+  }
+
   /* <select> (settings idle timeout): ←/→ change the value natively,
      ↑/↓ navigate to the next/previous control. (While the native
      dropdown popup is open, keys go to the popup, not here.) */

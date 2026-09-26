@@ -392,6 +392,8 @@ export function mountScan(container: HTMLElement): ScanHandle {
       const g = el('div', 'scan-hosts')
       for (const h of st.hosts) {
         const d = el('div', 'scan-host')
+        d.tabIndex = 0
+        d.dataset.fk = `host:${h.ip}`
         d.innerHTML = `<b>${h.ip}</b>${h.names.length ? `  ${h.names.join(', ')}` : ''}`
         g.appendChild(d)
       }
@@ -424,12 +426,20 @@ export function mountScan(container: HTMLElement): ScanHandle {
     row.appendChild(again)
     c.appendChild(row)
     root.appendChild(c)
+    /* fresh results (no control in this view had focus before): drop it
+       onto the first host card so ↑/↓ immediately scroll the results */
+    const ae = document.activeElement as HTMLElement | null
+    if (!ae || !root.contains(ae)) {
+      root.querySelector<HTMLElement>('.scan-host-card, .scan-host')?.focus()
+    }
   }
 
   function renderHostGrid(c: HTMLElement, detail: Record<string, PortInfo[]>) {
     const g = el('div', 'scan-hosts')
     for (const [ip, portList] of Object.entries(detail)) {
       const card = el('div', 'scan-host-card')
+      card.tabIndex = 0
+      card.dataset.fk = `host:${ip}`
       const names = lastState?.hosts.find(h => h.ip === ip)?.names ?? []
       card.innerHTML = `<div class="scan-host-card-ip"><b>${ip}</b>${names.length ? ` <span class="dim">${names.join(', ')}</span>` : ''}</div>`
       const tbl = el('div', 'port-table')

@@ -114,9 +114,13 @@ export function setIdleTimeout(s: number): void {
 
 function onActivity(e: Event): void {
   if (visible) {
-    /* swallow the waking input so it doesn't navigate the UI */
-    if (e instanceof KeyboardEvent || e instanceof MouseEvent) {
+    /* swallow the waking input COMPLETELY: preventDefault stops the
+       browser's native action, stopPropagation keeps it from reaching
+       the app's keydown handler (the app would otherwise act on the very
+       key that dismissed the screensaver). */
+    if (e instanceof KeyboardEvent || e instanceof MouseEvent || e instanceof TouchEvent) {
       e.preventDefault()
+      e.stopPropagation()
     }
     wake()
     return
@@ -132,6 +136,8 @@ export function initOverlay(initialS: number = DEFAULT_TIMEOUT_S): void {
     visible, timeoutS, idleS: Math.round((Date.now() - lastActivity) / 1000),
     hidden: document.hidden, cols: cols.length,
   })
+  ;(window as any).__ulaunchOverlay_setTimeout = (s: number) => setIdleTimeout(s)
+  ;(window as any).__ulaunchOverlay_show = () => show()
   overlay = makeOverlay()
   canvas = overlay.querySelector('canvas')!
   ctx = canvas.getContext('2d')
