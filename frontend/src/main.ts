@@ -3,12 +3,13 @@ import {
   fetchNet, exitApp, fmtUptime, type NetInfo,
   vpnPresets, vpnAddPreset, vpnDeletePreset, vpnStatus,
   vpnConnect, vpnDisconnect, vpnLog,
-  toolsCheck, toolsInstall, sudoVerify,
+  toolsCheck, toolsInstall,
   systemStatus, systemAction, getSettings, putSettings,
   type Preset, type VpnStatus,
 } from './api'
 import { mountScan, type ScanHandle } from './scan'
 import * as overlay from './overlay'
+import { askSudo } from './sudo'
 
 type Screen = 'home' | 'vpn' | 'scan' | 'system' | 'settings'
 
@@ -23,6 +24,7 @@ const ORDER: Screen[] = ['home', 'vpn', 'scan', 'system', 'settings']
 const app = document.getElementById('app')!
 let screen: Screen = 'home'
 let escOpen = false
+let preEscFk: string | undefined = undefined
 let lastNet: NetInfo | null = null
 
 /* vpn screen state */
@@ -47,62 +49,11 @@ async function api<T = any>(p: () => Promise<T>, retryOnSudo: boolean = true): P
     return await p()
   } catch (e: any) {
     if (retryOnSudo && e?.status === 401) {
-      await askSudo()
-      return p()
+      if (await askSudo()) return p()
+      throw new Error('cancelled (sudo required)')
     }
     throw e
   }
-}
-
-let sudoResolver: ((ok: boolean) => void) | null = null
-function askSudo(): Promise<boolean> {
-  return new Promise<boolean>(res => {
-    sudoResolver = res
-    renderSudoModal()
-  })
-}
-
-function renderSudoModal() {
-  document.getElementById('sudo-modal')?.remove()
-  const m = el('div', 'esc-menu open')
-  m.id = 'sudo-modal'
-  const box = el('div', 'box')
-  box.appendChild(el('div', 'title', 'ROOT ACCESS'))
-  const p = el('p', 'sub')
-  p.textContent = 'Enter your sudo password to continue. It is held in memory only and auto-expires.'
-  box.appendChild(p)
-  const inp = el('input', 'text-input')
-  inp.type = 'password'
-  inp.autocomplete = 'off'
-  inp.placeholder = 'password'
-  box.appendChild(inp)
-  const err = el('div', 'form-err')
-  box.appendChild(err)
-  const row = el('div', 'btn-row')
-  const cancel = el('button', 'btn', 'CANCEL')
-  const ok = el('button', 'btn', 'UNLOCK')
-  ok.classList.add('active')
-  const done = (ok: boolean) => {
-    sudoResolver?.(ok)
-    sudoResolver = null
-    m.remove()
-  }
-  cancel.addEventListener('click', () => done(false))
-  ok.addEventListener('click', () => {
-    sudoVerify(inp.value)
-      .then(() => done(true))
-      .catch(() => { err.textContent = 'wrong password — try again' })
-  })
-  inp.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') ok.click()
-    if (e.key === 'Escape') done(false)
-    e.stopPropagation()
-  })
-  row.appendChild(ok); row.appendChild(cancel)
-  box.appendChild(row)
-  m.appendChild(box)
-  app.appendChild(m)
-  setTimeout(() => inp.focus(), 30)
 }
 
 /* ───────────────────────── header / nav ───────────────────────── */
@@ -141,7 +92,7 @@ function header(net: NetInfo | null): HTMLElement {
 }
 
 function nav(): HTMLElement {
-  const n = el('nav', 'nav')
+  const n = el('nav', `nav${screen !== 'home' ? ' has-active' : ''}`)
   for (const t of TILES) {
     const d = el('button', `tile ${screen === t.id ? 'active' : ''}`)
     d.dataset.accent = t.accent
@@ -475,7 +426,7 @@ function footer(): HTMLElement {
   const f = el('footer', 'foot')
   f.innerHTML =
     '<span><kbd>←→</kbd>move</span><span><kbd>Enter</kbd>open tool</span>' +
-    '<span><kbd>←→</kbd>/<kbd>Tab</kbd>in tool</span><span><kbd>⌫</kbd>back</span>' +
+    '<span><kbd>←→</kbd>/<kbd>Tab</kbd>in tool</span><span><kbd>⌫</kbd>/<kbd>Esc</kbd>back</span>' +
     '<span><kbd>Esc</kbd>menu</span>'
   return f
 }
@@ -579,10 +530,23 @@ async function doExit(action: 'desktop' | 'hide' | 'exit') {
 
 function toggleEsc(force?: boolean) {
   escOpen = force ?? !escOpen
-  render()
+  overlay.wake()
   if (escOpen) {
-    const b = document.querySelector<HTMLElement>('#esc-menu .box .btn')
-    b?.focus()
+    /* remember where focus was (tiles/logo/content controls all carry
+       data-fk) so closing the menu puts it back */
+    const ae = document.activeElement as HTMLElement | null
+    preEscFk = ae && app.contains(ae) ? ae.dataset.fk : undefined
+    render()
+    document.querySelector<HTMLElement>('#esc-menu .box .btn')?.focus()
+  } else {
+    render()
+    const fk = preEscFk
+    preEscFk = undefined
+    if (fk) {
+      const back = app.querySelector<HTMLElement>(`[data-fk="${fk}"]`)
+      if (back && !(back as HTMLButtonElement).disabled) { back.focus(); return }
+    }
+    activeTile()?.focus() || app.querySelector<HTMLElement>('.logo')?.focus()
   }
 }
 
@@ -643,15 +607,38 @@ function enterTool(t: HTMLElement): void {
 
 document.addEventListener('keydown', (e: KeyboardEvent) => {
   if (document.getElementById('sudo-modal')) return /* modal owns keys */
+
+  /* ── standby (Esc) menu: arrows/Tab move between its buttons ── */
   if (escOpen) {
-    if (e.key === 'Escape') { e.preventDefault(); toggleEsc(false) }
+    if (e.key === 'Escape') { e.preventDefault(); toggleEsc(false); return }
+    const btns = Array.from(
+      document.querySelectorAll<HTMLElement>('#esc-menu .box .btn'))
+    const idx = btns.indexOf(e.target as HTMLElement)
+    const move = (d: number) => {
+      e.preventDefault()
+      if (btns.length) btns[(idx + d + btns.length) % btns.length]?.focus()
+    }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') move(1)
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') move(-1)
+    else if (e.key === 'Tab') move(e.shiftKey ? -1 : 1)
     return
   }
-  if (e.key === 'Escape') { e.preventDefault(); toggleEsc(true); return }
 
   const t = e.target as HTMLElement | null
   const content = app.querySelector<HTMLElement>('.content')
   const inContent = t && t !== document.body && content?.contains(t)
+
+  /* Esc: inside a tool → exit to the tool row (from any control, incl. a
+     text field); on the row / home / body → open the standby menu. */
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    if (screen !== 'home' && (t === null || t === document.body || inContent)) {
+      activeTile()?.focus()
+    } else {
+      toggleEsc(true)
+    }
+    return
+  }
 
   /* Tab: next/previous control within the tool. This is also the reliable
      way OUT of a text input (arrows move the caret, Backspace edits), so
@@ -700,8 +687,21 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   const isArrow = (e.key === 'ArrowRight' || e.key === 'ArrowLeft' ||
                    e.key === 'ArrowUp' || e.key === 'ArrowDown')
   if (!isArrow) return
-  /* text-entry fields and selects own the arrows natively (caret, value) */
-  if (isTextInput(t) || t?.tagName === 'SELECT') return
+
+  /* text-entry fields own the arrows natively (caret movement) */
+  if (isTextInput(t)) return
+
+  /* <select> (settings idle timeout): ←/→ change the value natively,
+     ↑/↓ navigate to the next/previous control. (While the native
+     dropdown popup is open, keys go to the popup, not here.) */
+  if (t?.tagName === 'SELECT') {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') return
+    e.preventDefault()
+    const dirSel: 1 | -1 = e.key === 'ArrowDown' ? 1 : -1
+    stepInContent(dirSel)
+    return
+  }
+
   const dir: 1 | -1 = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1
   e.preventDefault()
 

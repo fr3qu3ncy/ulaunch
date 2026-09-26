@@ -94,6 +94,15 @@ html, body {
 }
 .tile .ico { font-size: 1.6em; line-height: 1; }
 .tile:hover { border-color: rgba(0, 245, 255, 0.5); }
+/* each tile carries its neon accent by default — the launcher's colour
+   scheme (settings has no accent and stays white) */
+.tile[data-accent="green"] { color: var(--green); text-shadow: 0 0 8px rgba(61, 255, 158, 0.5); }
+.tile[data-accent="magenta"] { color: var(--magenta); text-shadow: 0 0 8px rgba(255, 46, 196, 0.5); }
+.tile[data-accent="amber"] { color: var(--amber); text-shadow: 0 0 8px rgba(255, 194, 71, 0.5); }
+.tile[data-accent="cyan"] { color: var(--cyan); text-shadow: 0 0 8px rgba(0, 245, 255, 0.5); }
+/* when a tool is selected, the unselected tiles drop to white so the
+   active one stands out */
+.nav.has-active .tile:not(.active) { color: var(--text); text-shadow: none; }
 .tile.active {
   border-color: var(--cyan);
   box-shadow: 0 0 18px rgba(0, 245, 255, 0.35), inset 0 0 24px rgba(0, 245, 255, 0.08);

@@ -67,11 +67,20 @@ Two levels — the tool row and the tool:
 | tool row (logo + tiles) | move between tools (wraps) | **drop into the tool** — focus lands on its first control | — |
 | inside a tool | move through the tool's own options (wraps) | activate the focused option | **exit the tool** — focus returns to its tile |
 
-Tab/Shift+Tab work too (same in-tool cycle, wrapping). Inside text-entry
-fields, arrows/Backspace keep their native meaning (caret, editing) — Tab
-is the way to the next control. The 15s network auto-refresh updates only
-the live header stats on VPN/SCAN — it never re-renders the screen or
-steals focus.
+- **Esc** exits the tool (same as Backspace); on the tool row it opens the
+  standby menu, where **←/→** walk its buttons. Esc on the logo/home
+  screen opens the menu directly.
+- In the **Settings idle-timeout** selector, **←/→** change the value and
+  **↑/↓** move to the next/previous item.
+- Tab/Shift+Tab work too (same in-tool cycle, wrapping). Inside text-entry
+  fields, arrows/Backspace keep their native meaning (caret, editing) — Tab
+  is the way to the next control.
+- The tool tiles keep their neon accents (green/magenta/amber); when a
+  tool is selected the unselected tiles drop to white.
+- Privileged actions (installing nmap/openvpn, connecting VPN, power
+  actions) prompt for the sudo password **in-app** — no browser dialogs.
+- The 15s network auto-refresh updates only the live header stats on
+  VPN/SCAN — it never re-renders the screen or steals focus.
 
 ## Layout
 

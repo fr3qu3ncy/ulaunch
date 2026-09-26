@@ -1,5 +1,6 @@
 /** SCAN screen: pick interface -> flags -> staged live scan -> results.
  *  Renders into the given container; owns its own state + WebSocket. */
+import { askSudo } from './sudo'
 
 export interface ScanState {
   id: string
@@ -102,6 +103,39 @@ export function mountScan(container: HTMLElement): ScanHandle {
   const root = el('div', 'scan-root')
   container.appendChild(root)
 
+  /* Install nmap. On 401 ("sudo password required") we pop the styled
+     in-app sudo modal instead of a browser alert, then retry. Cancelling
+     the modal just restores the button; real failures get an alert. */
+  async function installNmap(btn: HTMLButtonElement) {
+    const label = btn.textContent
+    btn.disabled = true
+    btn.textContent = 'installing…'
+    const restore = () => { btn.disabled = false; btn.textContent = label }
+    for (;;) {
+      let r: Response
+      try {
+        r = await fetch('/api/tools/install', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tool: 'nmap' }),
+        })
+      } catch (e: any) {
+        restore(); alert(String(e.message || e)); return
+      }
+      if (r.status === 401) {
+        if (!(await askSudo())) { restore(); return }
+        continue /* retry — the password is now cached server-side */
+      }
+      if (!r.ok) {
+        const detail = (await r.json().catch(() => ({}))).detail || `install failed (${r.status})`
+        restore(); alert(detail); return
+      }
+      nmapInstalled = true
+      render()
+      return
+    }
+  }
+
   function renderPick() {
     /* remember which control had focus (by stable data-fk) so a
        re-render (toggle flip, option pick) doesn't drop it to body */
@@ -117,21 +151,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
       const inst = el('button', 'btn active', 'INSTALL NMAP')
       inst.tabIndex = 0
       inst.dataset.fk = 'install'
-      inst.addEventListener('click', () => {
-        inst.disabled = true; inst.textContent = 'installing…'
-        fetch('/api/tools/install', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tool: 'nmap' }),
-        }).then(async r => {
-          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `install failed (${r.status})`)
-          nmapInstalled = true
-          if (phase === 'pick') render()
-        }).catch(e => {
-          inst.disabled = false; inst.textContent = 'INSTALL NMAP'
-          alert(String(e.message || e))
-        })
-      })
+      inst.addEventListener('click', () => installNmap(inst))
       tb.appendChild(inst)
       c.appendChild(tb)
     }
@@ -388,21 +408,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
       const inst = el('button', 'btn active', 'INSTALL NMAP')
       inst.tabIndex = 0
       inst.dataset.fk = 'install'
-      inst.addEventListener('click', () => {
-        inst.disabled = true; inst.textContent = 'installing…'
-        fetch('/api/tools/install', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tool: 'nmap' }),
-        }).then(async r => {
-          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `install failed (${r.status})`)
-          nmapInstalled = true
-          render()
-        }).catch(e => {
-          inst.disabled = false; inst.textContent = 'INSTALL NMAP'
-          alert(String(e.message || e))
-        })
-      })
+      inst.addEventListener('click', () => installNmap(inst))
       row.appendChild(inst)
     }
     const again = el('button', 'btn active', '↻ NEW SCAN')
