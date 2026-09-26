@@ -111,6 +111,7 @@ function header(net: NetInfo | null): HTMLElement {
   const logo = el('button', 'logo')
   logo.type = 'button'
   logo.title = 'Home'
+  logo.dataset.fk = 'logo'
   logo.innerHTML = 'ULAUNCH<span>_</span>'
   logo.style.cssText = 'background:none;border:none;cursor:pointer'
   logo.addEventListener('click', () => go('home'))
@@ -142,6 +143,7 @@ function nav(): HTMLElement {
     const d = el('button', `tile ${screen === t.id ? 'active' : ''}`)
     d.dataset.accent = t.accent
     d.dataset.screen = t.id
+    d.dataset.fk = `tile:${t.id}`
     d.tabIndex = 0
     d.innerHTML = `<span class="ico">${t.ico}</span>${t.label}`
     d.addEventListener('click', () => go(t.id))
@@ -457,7 +459,8 @@ function footer(): HTMLElement {
   const f = el('footer', 'foot')
   f.innerHTML =
     '<span><kbd>←→</kbd>switch</span><span><kbd>Tab</kbd>focus</span>' +
-    '<span><kbd>Enter</kbd>open</span><span><kbd>Esc</kbd>menu</span>'
+    '<span><kbd>Enter</kbd>open</span><span><kbd>⌫</kbd>back</span>' +
+    '<span><kbd>Esc</kbd>menu</span>'
   return f
 }
 
@@ -481,6 +484,13 @@ function escMenu(): HTMLElement {
 
 /* ───────────────────────── render ───────────────────────── */
 function render() {
+  /* preserve keyboard focus across the re-render: remember the focused
+     control's stable data-fk and restore it afterwards. Without this,
+     every async re-render (VPN refresh, net update) drops focus to the
+     body and Tab restarts at the logo. */
+  const ae = document.activeElement as HTMLElement | null
+  const fk = ae && app.contains(ae) ? ae.dataset.fk : undefined
+
   app.innerHTML = ''
   app.appendChild(header(lastNet))
   app.appendChild(nav())
@@ -496,26 +506,39 @@ function render() {
   app.appendChild(footer())
   app.appendChild(escMenu())
   if (escOpen) document.getElementById('esc-menu')!.classList.add('open')
-}
 
-function focusFirst(which: 'nav' | 'vpn') {
-  const root = which === 'nav' ? app.querySelector('.nav') : app.querySelector('.content')
-  const first = root?.querySelector<HTMLElement>('button, input, textarea, [tabindex="0"]')
-  first?.focus()
+  if (fk) {
+    const restored = app.querySelector<HTMLElement>(`[data-fk="${fk}"]`)
+    if (restored && !(restored as HTMLButtonElement).disabled) restored.focus()
+  }
 }
 
 /* ───────────────────────── state ───────────────────────── */
-function go(s: Screen) {
+/* two-level keyboard navigation. The tool ROW is the primary surface:
+   Tab lands on the active tile, arrows move between tools, and the next
+   Tab drops into that tool's first control. Once inside a tool, Tab and
+   arrows stay within the tool (never resetting to the logo). */
+function activeTile(): HTMLElement | null {
+  return app.querySelector<HTMLElement>('.nav .tile.active')
+}
+function focusContentFirst(): void {
+  const first = app.querySelector<HTMLElement>('.content button, .content input, .content [tabindex="0"]')
+  first?.focus()
+}
+
+async function go(s: Screen) {
   const prev = screen
   screen = s
   if (prev === 'scan') { scanHandle?.destroy(); scanHandle = null }
   render()
-  if (s === 'vpn') { refreshVpn(); startLogPoll(); focusFirst('vpn') }
+  if (s === 'vpn') { await refreshVpn(); startLogPoll() }
   if (prev === 'vpn') stopLogPoll()
-  if (s === 'system' || s === 'settings') {
-    const first = app.querySelector<HTMLElement>('.content button, .content [tabindex="0"]')
-    first?.focus()
-  }
+  /* drop focus into the tool (its first control) so the user is in the
+     tool they picked and Tab progresses from there, not the logo.
+     For SCAN the options load async — mountScan owns the initial focus
+     (focuses the first option once they arrive). */
+  if (s === 'home') app.querySelector<HTMLElement>('.logo')?.focus()
+  else if (s !== 'scan') focusContentFirst()
 }
 
 async function doExit(action: 'desktop' | 'hide' | 'exit') {
@@ -562,24 +585,63 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
     return /* typing wins */
   }
 
-  /* arrow nav: if a control is focused, move between controls in the screen */
-  if ((e.key === 'ArrowRight' || e.key === 'ArrowDown' ||
-       e.key === 'ArrowLeft' || e.key === 'ArrowUp') && t && t !== document.body) {
-    const list = focusables(app)
-    const idx = list.indexOf(t)
-    if (idx !== -1) {
+  /* Backspace: exit the current tool — focus returns to its tile in the
+     tool row. (Inputs are excluded above, so it never eats keystrokes.) */
+  if (e.key === 'Backspace') {
+    const content = app.querySelector<HTMLElement>('.content')
+    if (screen !== 'home' &&
+        (t === null || t === document.body || content?.contains(t))) {
       e.preventDefault()
-      const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1
-      const next = list[idx + dir] ?? list[0]
-      ;(list[(idx + dir + list.length) % list.length] ?? next)?.focus()
+      activeTile()?.focus()
       return
     }
   }
 
-  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+  const isArrow = (e.key === 'ArrowRight' || e.key === 'ArrowLeft' ||
+                   e.key === 'ArrowUp' || e.key === 'ArrowDown')
+  if (isArrow) {
+    const dir = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1
+    /* on the tool row (logo or a tile): arrows move between tools */
+    if (t && (t.classList.contains('logo') || t.classList.contains('tile'))) {
+      e.preventDefault()
+      const row = [
+        app.querySelector<HTMLElement>('.logo')!,
+        ...Array.from(app.querySelectorAll<HTMLElement>('.nav .tile')),
+      ]
+      const idx = row.indexOf(t)
+      row[(idx + dir + row.length) % row.length]?.focus()
+      return
+    }
+    /* anywhere else (inside a tool's content, or body after a re-render):
+       arrows cycle between tools/screens. This is the way to hop between
+       tools without re-entering the nav row. */
     e.preventDefault()
-    const d = e.key === 'ArrowRight' ? 1 : -1
-    go(ORDER[(ORDER.indexOf(screen) + d + ORDER.length) % ORDER.length])
+    const target = ORDER[(ORDER.indexOf(screen) + dir + ORDER.length) % ORDER.length]
+    void go(target)
+    return
+  }
+
+  /* Tab: once inside a tool, Tab/Shift+Tab cycle within that tool's
+     controls only (native Tab would escape back to the logo). */
+  if (e.key === 'Tab') {
+    const content = app.querySelector<HTMLElement>('.content')
+    if (t && t !== document.body && content?.contains(t)) {
+      e.preventDefault()
+      const list = focusables(content)
+      if (list.length) {
+        const idx = list.indexOf(t)
+        if (e.shiftKey) {
+          /* Shift+Tab walks back through the tool, wrapping to its end */
+          list[(idx - 1 + list.length) % list.length]?.focus()
+        } else {
+          /* forward Tab walks through the tool; from the LAST control it
+             exits back to the active tile (the way out, like '← back') */
+          if (idx === list.length - 1) activeTile()?.focus()
+          else list[idx + 1]?.focus()
+        }
+      }
+      return
+    }
   }
 })
 
@@ -589,10 +651,11 @@ async function refresh() {
     const net = await fetchNet()
     const first = !lastNet
     lastNet = net
-    /* don't re-render while the user is on the VPN screen — the 2.5s
-       log poller updates that view in place; a full re-render would
-       wipe typed config text and steal focus */
-    if (screen !== 'vpn') render()
+    /* don't re-render while the user is on VPN or SCAN — the VPN log
+       poller updates that view in place and the SCAN view owns a live
+       WebSocket; a full re-render would wipe typed config / the live
+       scan and steal focus */
+    if (screen !== 'vpn' && screen !== 'scan') render()
     if (first) {
       const first = app.querySelector<HTMLElement>('.nav .tile')
       first?.focus()

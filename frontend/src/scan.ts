@@ -97,19 +97,52 @@ export function mountScan(container: HTMLElement): ScanHandle {
   let selIndex = 0
   let flags: ScanFlags = { ...DEFAULT_FLAGS }
   let jobStarted = false
+  let nmapInstalled: boolean | null = null
 
   const root = el('div', 'scan-root')
   container.appendChild(root)
 
   function renderPick() {
+    /* remember which control had focus (by stable data-fk) so a
+       re-render (toggle flip, option pick) doesn't drop it to body */
+    const ae = document.activeElement as HTMLElement | null
+    const fk = (ae && root.contains(ae) ? ae.dataset.fk : undefined)
+
     root.innerHTML = ''
     const c = el('div', 'scan-content')
+
+    if (nmapInstalled === false) {
+      const tb = el('div', 'tool-banner')
+      tb.innerHTML = '<span>⚠ nmap not installed — scanning unavailable</span>'
+      const inst = el('button', 'btn active', 'INSTALL NMAP')
+      inst.tabIndex = 0
+      inst.dataset.fk = 'install'
+      inst.addEventListener('click', () => {
+        inst.disabled = true; inst.textContent = 'installing…'
+        fetch('/api/tools/install', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tool: 'nmap' }),
+        }).then(async r => {
+          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `install failed (${r.status})`)
+          nmapInstalled = true
+          if (phase === 'pick') render()
+        }).catch(e => {
+          inst.disabled = false; inst.textContent = 'INSTALL NMAP'
+          alert(String(e.message || e))
+        })
+      })
+      tb.appendChild(inst)
+      c.appendChild(tb)
+    }
+
     c.appendChild(el('div', 'section-title', 'SELECT NETWORK'))
 
     const list = el('div', 'scan-opt-list')
     options.forEach((o, i) => {
       const b = el('button', `scan-opt ${i === selIndex ? 'active' : ''}`)
       b.tabIndex = 0
+      b.dataset.fk = `opt:${i}`
       const head = el('span', 'scan-opt-head')
       head.innerHTML = `<span class="dot on"></span><b>${o.name}</b>`
       head.appendChild(el('span', `c-type ${o.type}`, o.type))
@@ -132,6 +165,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
     for (const [key, label, title] of toggles) {
       const t = el('button', `toggle ${flags[key] ? 'on' : ''}`)
       t.tabIndex = 0
+      t.dataset.fk = `tgl:${key}`
       t.title = title
       t.textContent = label
       t.addEventListener('click', () => {
@@ -148,15 +182,31 @@ export function mountScan(container: HTMLElement): ScanHandle {
       const row = el('div', 'btn-row')
       const start = el('button', 'btn active big', '▶  START SCAN')
       start.tabIndex = 0
+      start.dataset.fk = 'start'
+      if (nmapInstalled === false) { start.disabled = true; start.title = 'install nmap first' }
       start.addEventListener('click', startScan)
       row.appendChild(start)
       c.appendChild(row)
     }
     root.appendChild(c)
+    if (fk) {
+      root.querySelector<HTMLElement>(`[data-fk="${fk}"]`)?.focus()
+      return
+    }
+    /* focus is OUTSIDE the scan view (e.g. sitting on the SCAN tile after
+       Enter, or body on first mount): drop it onto the first control so the
+       user is never stranded on the nav row with no keyboard path in.
+       Only once options have loaded, so we land on the first option rather
+       than a toggle from a pre-options render. */
+    const ae2 = document.activeElement as HTMLElement | null
+    if (options.length > 0 && (!ae2 || !root.contains(ae2))) {
+      root.querySelector<HTMLElement>('.scan-opt, .btn, [tabindex="0"]')?.focus()
+    }
   }
 
   async function startScan() {
     if (jobStarted) return
+    if (nmapInstalled === false) { alert('nmap is not installed — press INSTALL NMAP first'); return }
     const opt = options[selIndex]
     if (!opt) return
     try {
@@ -378,6 +428,12 @@ export function mountScan(container: HTMLElement): ScanHandle {
   scanSubnets()
     .then(o => { options = o; if (phase === 'pick') render() })
     .catch(() => { if (phase === 'pick') render() })
+
+  /* nmap availability check — gates START + drives the install banner */
+  fetch('/api/tools').then(r => r.ok ? r.json() : null).then(t => {
+    nmapInstalled = t?.nmap?.installed === true
+    if (phase === 'pick') render()
+  }).catch(() => { nmapInstalled = true /* assume ok if backend unreachable */ })
 
   /* apply saved scan defaults */
   fetch('/api/settings').then(r => r.ok ? r.json() : null).then(st => {

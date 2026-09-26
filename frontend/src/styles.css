@@ -94,31 +94,44 @@ html, body {
 }
 .tile .ico { font-size: 1.6em; line-height: 1; }
 .tile:hover { border-color: rgba(0, 245, 255, 0.5); }
-.tile.active, .tile:focus-visible {
+.tile.active {
   border-color: var(--cyan);
   box-shadow: 0 0 18px rgba(0, 245, 255, 0.35), inset 0 0 24px rgba(0, 245, 255, 0.08);
   color: var(--cyan);
   text-shadow: 0 0 10px rgba(0, 245, 255, 0.9);
 }
-.tile[data-accent="magenta"].active, .tile[data-accent="magenta"]:focus-visible {
+.tile[data-accent="magenta"].active {
   border-color: var(--magenta);
   box-shadow: 0 0 18px rgba(255, 46, 196, 0.35), inset 0 0 24px rgba(255, 46, 196, 0.08);
   color: var(--magenta); text-shadow: 0 0 10px rgba(255, 46, 196, 0.9);
 }
-.tile[data-accent="green"].active, .tile[data-accent="green"]:focus-visible {
+.tile[data-accent="green"].active {
   border-color: var(--green);
   box-shadow: 0 0 18px rgba(61, 255, 158, 0.35), inset 0 0 24px rgba(61, 255, 158, 0.08);
   color: var(--green); text-shadow: 0 0 10px rgba(61, 255, 158, 0.9);
 }
-.tile[data-accent="amber"].active, .tile[data-accent="amber"]:focus-visible {
+.tile[data-accent="amber"].active {
   border-color: var(--amber);
   box-shadow: 0 0 18px rgba(255, 194, 71, 0.35), inset 0 0 24px rgba(255, 194, 71, 0.08);
   color: var(--amber); text-shadow: 0 0 10px rgba(255, 194, 71, 0.9);
 }
-.tile[data-accent="red"].active, .tile[data-accent="red"]:focus-visible {
+.tile[data-accent="red"].active {
   border-color: var(--red);
   box-shadow: 0 0 18px rgba(255, 59, 92, 0.35), inset 0 0 24px rgba(255, 59, 92, 0.08);
   color: var(--red); text-shadow: 0 0 10px rgba(255, 59, 92, 0.9);
+}
+/* keyboard focus — dashed outline, clearly distinct from the accent glow
+   of the *selected* tool */
+.tile:focus-visible,
+.hdr .logo:focus-visible,
+.scan-opt:focus-visible,
+.toggle:focus-visible,
+.btn:focus-visible,
+.sys-btn:focus-visible,
+.select-input:focus-visible,
+.check-input:focus-visible {
+  outline: 3px dashed rgba(255, 255, 255, 0.9);
+  outline-offset: 3px;
 }
 
 /* ── content area ── */
@@ -503,7 +516,6 @@ html, body {
   box-shadow: 0 0 10px rgba(0, 245, 255, 0.3);
   text-shadow: 0 0 8px rgba(0, 245, 255, 0.7);
 }
-.toggle:focus-visible { border-color: var(--cyan); }
 
 .scan-progress { display: flex; gap: 0.6em; }
 .prog-step {

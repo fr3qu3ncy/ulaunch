@@ -8,6 +8,7 @@ collected from nmap's machine-readable output (-oX) parsed as XML.
 import ipaddress
 import queue
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -154,6 +155,12 @@ class Scanner:
 
     def _nmap(self, job: ScanJob, args: list[str]) -> str | None:
         """Run nmap; stream output lines; return XML path on success."""
+        if shutil.which("nmap") is None:
+            job.status = "error"
+            job.error = "nmap is not installed — use the INSTALL button on the SCAN screen"
+            job.publish(job.stage or "discovery",
+                        "ERROR: nmap not installed (press INSTALL on the SCAN screen)")
+            return None
         import tempfile
         xml = tempfile.NamedTemporaryFile(prefix="ulaunch-nmap-", suffix=".xml",
                                           delete=False).name
