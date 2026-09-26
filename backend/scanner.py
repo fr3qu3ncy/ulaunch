@@ -107,12 +107,11 @@ def parse_nmap_xml(path: str) -> dict:
 
 
 def _scripts(port_el) -> list:
+    """Nmap XML: each script is a SIBLING <script id=".." output=".."/>
+    element under <port> (output is an ATTRIBUTE, not nested text)."""
     res = []
-    scripts_el = port_el.find("script")
-    if scripts_el is None:
-        return res
-    for s in scripts_el:
-        res.append({"id": s.get("id", ""), "output": s.text or ""})
+    for s in port_el.findall("script"):
+        res.append({"id": s.get("id", ""), "output": s.get("output", "")})
     return res
 
 
