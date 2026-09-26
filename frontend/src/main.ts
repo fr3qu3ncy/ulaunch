@@ -163,7 +163,7 @@ function vpnRow(p: Preset, active: boolean): HTMLElement {
   info.querySelector('.vpn-row-name')!.innerHTML =
     `<span class="dot ${active ? 'on' : ''}"></span> ${p.name}`
   const meta = el('div', 'vpn-row-meta')
-  meta.textContent = [p.proto, p.server, p.last_connected ? `last ${p.last_connected}` : 'never connected']
+  meta.textContent = [p.proto || 'udp (default)', p.server, p.last_connected ? `last ${p.last_connected}` : 'never connected']
     .filter(Boolean).join(' · ')
   info.appendChild(meta)
   row.appendChild(info)
@@ -605,6 +605,80 @@ function enterTool(t: HTMLElement): void {
   else focusContentFirst()
 }
 
+/* ── results-list scrolling ──────────────────────────────── */
+/* One arrow press = a few lines (~4 port rows) of scrolling while the
+   focused host card overflows the results pane (deep scans produce tall
+   cards); once the card no longer overflows the pressed edge, focus jumps
+   to the neighbouring card. ↓ past the LAST card falls through to the
+   NEW SCAN button (handled by the caller). Returns true when the key was
+   handled (scrolled, jumped, or clamped), false for the caller to act on. */
+function resultsArrow(dir: 1 | -1, card: HTMLElement, content: HTMLElement | null): boolean {
+  if (!content) return false
+  const list = Array.from(content.querySelectorAll<HTMLElement>('.scan-host-card, .scan-host'))
+  const i = list.indexOf(card)
+  const cr = card.getBoundingClientRect()
+  const vr = content.getBoundingClientRect()
+  const padB = parseFloat(getComputedStyle(content).paddingBottom) || 0
+  const viewH = vr.height - padB
+  const top = cr.top - vr.top
+  const bottom = top + cr.height
+  /* ~4 port rows per press — "a few lines" */
+  const line = () => Math.max(20, Math.round(((content.querySelector('.port-row') as HTMLElement | null)?.offsetHeight || 40) * 4))
+
+  if (dir === 1) {
+    /* DOWN: scroll the missing bottom edge in, a few lines per press */
+    const needed = bottom - viewH
+    if (needed > 0.5) {
+      if (content.scrollTop >= Math.max(0, content.scrollHeight - viewH) - 0.5) {
+        /* card taller than the whole pane — scroll is at its end: hand
+           over to the next card (or NEW SCAN if this one is last) */
+        if (i + 1 < list.length) { list[i + 1].focus({ preventScroll: true }); return true }
+        return false
+      }
+      content.scrollTo({ top: content.scrollTop + Math.min(line(), needed), behavior: 'smooth' })
+      return true
+    }
+    /* card bottom is at/above the pane bottom: hand over to the next card */
+    if (i + 1 < list.length) {
+      const n = list[i + 1].getBoundingClientRect().top - vr.top
+      if (n <= viewH - 40) {
+        /* next card is on screen: jump to it (its top at the pane top) */
+        list[i + 1].focus({ preventScroll: true })
+        content.scrollTo({ top: n + content.scrollTop, behavior: 'smooth' })
+        return true
+      }
+      /* next card is below the pane: scroll it in a few lines */
+      content.scrollTo({ top: Math.min(content.scrollTop + line(), n + content.scrollTop - 8), behavior: 'smooth' })
+      return true
+    }
+    return false /* last card -> caller focuses NEW SCAN */
+  }
+
+  /* UP: scroll the missing top edge in, a few lines per press */
+  const room = -top
+  if (room > 0.5) {
+    if (content.scrollTop <= 0.5) {
+      /* card taller than the whole pane at the top: jump to the previous
+         card (or stay clamped on the first) */
+      if (i > 0) {
+        list[i - 1].focus({ preventScroll: true })
+        return true
+      }
+      return true
+    }
+    content.scrollTo({ top: Math.max(0, content.scrollTop - Math.min(line(), room)), behavior: 'smooth' })
+    return true
+  }
+  /* card top is at/above the pane top: jump to the previous card */
+  if (i > 0) {
+    list[i - 1].focus({ preventScroll: true })
+    const pb = list[i - 1].getBoundingClientRect().bottom - vr.top
+    content.scrollTo({ top: Math.max(0, content.scrollTop + pb - 12), behavior: 'smooth' })
+    return true
+  }
+  return true /* clamped at the top */
+}
+
 document.addEventListener('keydown', (e: KeyboardEvent) => {
   if (document.getElementById('sudo-modal')) return /* modal owns keys */
 
@@ -691,21 +765,19 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   /* text-entry fields own the arrows natively (caret movement) */
   if (isTextInput(t)) return
 
-  /* scan results list: ↑/↓ move between the host cards and scroll them.
-     Clamped at the top; past the BOTTOM ↓, focus falls through to the
-     NEW SCAN button below the list. ←/→ (and Tab) keep cycling ALL
-     controls of the tool as before. */
+  /* scan results list: ↑/↓ scroll a few LINES per press while the focused
+     host card overflows the results pane (deep scans produce tall cards),
+     and jump to the previous/next card once the card is fully visible.
+     Past the BOTTOM ↓, focus falls through to the NEW SCAN button below
+     the list. ←/→ (and Tab) keep cycling ALL controls of the tool. */
+  const dir: 1 | -1 = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1
+
   if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
       t && (t.classList.contains('scan-host-card') || t.classList.contains('scan-host'))) {
     e.preventDefault()
-    const list = Array.from(content?.querySelectorAll<HTMLElement>('.scan-host-card, .scan-host') ?? [])
-    const i = list.indexOf(t)
-    const dirList: 1 | -1 = e.key === 'ArrowDown' ? 1 : -1
-    if (i >= 0 && i + dirList >= 0 && i + dirList < list.length) {
-      list[i + dirList].focus()
-    } else if (dirList === 1) {
-      content?.querySelector<HTMLElement>('[data-fk="newscan"]')?.focus()
-    }
+    if (resultsArrow(dir, t, content)) return
+    /* not scrollable/navigable: past the last card ↓ → NEW SCAN */
+    if (dir === 1) content?.querySelector<HTMLElement>('[data-fk="newscan"]')?.focus()
     return
   }
 
@@ -720,9 +792,7 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
     return
   }
 
-  const dir: 1 | -1 = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1
   e.preventDefault()
-
   const idx = onRow(t)
   if (idx >= 0) {
     /* on the tool row: ←/→ move between tools (wrapping) */

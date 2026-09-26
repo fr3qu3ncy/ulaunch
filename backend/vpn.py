@@ -106,9 +106,14 @@ def _validate_config(config: str) -> None:
     """openvpn --test is not a thing; do a syntax sanity check with
     openvpn --show-config is also not portable. Use openvpn itself in
     a dry way: `openvpn --config <f>` would connect — too heavy. Instead
-    check the essential directives are present."""
+    check the essential directives are present.
+
+    'proto' is NOT required: OpenVPN defaults to UDP when it is absent
+    (OpenVPN 2.4 manual: "The default protocol is udp when --proto is
+    not specified"). pfsense-generated .ovpn files commonly omit it.
+    """
     low = config.lower()
-    for req in ("remote", "proto", "dev"):
+    for req in ("remote", "dev"):
         if not re.search(rf"^\s*{req}\b", low, re.M):
             raise ValueError(f"config is missing the '{req}' directive")
 
