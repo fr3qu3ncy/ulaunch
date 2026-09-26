@@ -1,14 +1,15 @@
 """In-app sudo: the user types the password once in the UI; it is verified
 against `sudo -v` and cached in process memory (TTL) for subsequent
 privileged ops. The secret never touches disk or logs."""
+import io
 import os
 import subprocess
 import threading
 import time
 
 # write-ends of stdin pipes for long-running privileged children, keyed by
-# the Popen. Held open so openvpn never sees EOF; closed on kill/exit.
-_held_stdin: dict[subprocess.Popen, int] = {}
+# the Popen. Held OPEN so openvpn never sees EOF; closed on kill/exit.
+_held_stdin: dict[subprocess.Popen, "io.TextIOWrapper"] = {}
 _held_lock = threading.Lock()
 
 
@@ -98,21 +99,23 @@ class Sudo:
             start_new_session=True,
         )
         os.close(r)          # parent no longer needs the read end
-        with os.fdopen(w, "w") as f:
-            f.write(pw + "\n")
-            f.flush()
-        # do NOT close the write end — keep it held until the child dies
+        f = os.fdopen(w, "w")
+        f.write(pw + "\n")
+        f.flush()
+        # do NOT close the write end — a closed pipe (EOF) makes a
+        # foreground openvpn exit. Keep the file object held open until
+        # the child dies (close_stdin()).
         with _held_lock:
-            _held_stdin[proc] = w
+            _held_stdin[proc] = f
         return proc
 
     def close_stdin(self, proc: subprocess.Popen) -> None:
         """Release the held stdin pipe (safe to call more than once)."""
         with _held_lock:
-            fd = _held_stdin.pop(proc, None)
-        if fd is not None:
+            f = _held_stdin.pop(proc, None)
+        if f is not None:
             try:
-                os.close(fd)
+                f.close()
             except OSError:
                 pass
 
