@@ -6,6 +6,7 @@ import os
 import subprocess
 import threading
 import time
+from typing import Any
 
 # write-ends of stdin pipes for long-running privileged children, keyed by
 # the Popen. Held OPEN so openvpn never sees EOF; closed on kill/exit.
@@ -77,7 +78,8 @@ class Sudo:
             capture_output=True, text=True, timeout=timeout,
         )
 
-    def popen(self, *args: str) -> subprocess.Popen:
+    def popen(self, *args: str,
+              stderr: Any = None, stdout: Any = None) -> subprocess.Popen:
         """Privileged long-running Popen (openvpn).
 
         The password is written to an anonymous pipe (never a file on
@@ -91,11 +93,15 @@ class Sudo:
             raise SudoRequired()
 
         r, w = os.pipe()
+        err_target = (stderr if stderr is not None
+                      else subprocess.DEVNULL)
+        out_target = (stdout if stdout is not None
+                      else subprocess.DEVNULL)
         proc = subprocess.Popen(
             ["sudo", "-S", *args],
             stdin=r,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=out_target,
+            stderr=err_target,
             start_new_session=True,
         )
         os.close(r)          # parent no longer needs the read end

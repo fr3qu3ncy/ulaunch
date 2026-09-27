@@ -27,6 +27,11 @@ def _ensure_dirs() -> None:
     VPN_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     RUN_DIR.mkdir(parents=True, exist_ok=True)
+    # RUN_DIR now holds per-connection VPN login files — keep it private
+    try:
+        os.chmod(RUN_DIR, 0o700)
+    except OSError:
+        pass
 
 
 def _safe_name(name: str) -> str:
@@ -60,12 +65,13 @@ def _save_meta(name: str, meta: dict) -> None:
 
 def _temp_config_path(name: str) -> Path:
     # .conf (not .ovpn) so list_presets' *.ovpn glob never picks it up
-    return VPN_DIR / f".{name}.conf"
+    return RUN_DIR / f".{name}.conf"
 
 
-def _has_inline_auth(config: str) -> bool:
-    """Config already carries its own login (username/password directives)."""
-    return bool(re.search(r"^\s*(?:username|password)\b", config, re.M | re.I))
+def _creds_file_path(name: str) -> Path:
+    # per-connection OpenVPN login file (auth-user-pass); 0600, deleted
+    # when the process exits — never kept on disk between connects
+    return RUN_DIR / f"{name}.vpnc"
 
 
 def _pid_file(name: str) -> Path:
@@ -162,7 +168,7 @@ def delete_preset(name: str) -> bool:
         return False
     p.unlink()
     _meta_path(name).unlink(missing_ok=True)
-    _temp_config_path(name).unlink(missing_ok=True)
+    _cleanup_vpn_files(name)
     return True
 
 
@@ -229,35 +235,37 @@ def status() -> dict:
     return {"connected": False}
 
 
-def _effective_config(name: str, cfg: Path) -> Path:
+def _effective_config(name: str, cfg: Path,
+                      username: str, password: str) -> Path:
     """Config file to hand to openvpn.
 
-    Stored credentials are injected into a temp copy (0600) — never into
-    the saved .ovpn. Any `auth-user-pass <file>` line (pfsense generates
-    one pointing at a file that doesn't exist here) is replaced, since
-    openvpn would fail to read it. Configs that already carry inline
-    username/password directives are used as-is (they win over stored
-    creds).
+    The login is written to a 0600 credentials file and referenced with
+    `auth-user-pass <file>` — the only non-interactive login mechanism
+    OpenVPN supports. (Inline `username`/`password` config lines are NOT
+    valid OpenVPN directives — openvpn dies at option-parse with
+    'Unrecognized option', before it even opens the --log file, which is
+    exactly the old 'exited immediately / no log' bug.)
+
+    Any existing `auth-user-pass` line (pfsense generates one pointing at
+    a path that doesn't exist on this device) is replaced. The temp config
+    + creds file live in RUN_DIR and are removed when the process exits.
     """
-    try:
-        text = cfg.read_text()
-    except Exception:
-        return cfg
-    meta = _load_meta(name)
-    user, pw = meta.get("username"), meta.get("password")
-    if user and pw and not _has_inline_auth(text):
-        lines = text.splitlines()
-        if re.search(r"^\s*auth-user-pass\b", "\n".join(lines), re.M):
-            lines = [l for l in lines if not re.match(r"^\s*auth-user-pass\b", l)]
-        lines = [l for l in lines if not re.match(r"^\s*username\b", l)]
-        lines.append(f"username {user}")
-        lines.append(f"password {pw}")
-        tc = _temp_config_path(name)
-        tc.write_text("\n".join(lines).rstrip() + "\n")
-        os.chmod(tc, 0o600)
-        return tc
+    text = cfg.read_text(errors="replace")
+    lines = text.splitlines()
+    lines = [l for l in lines if not re.match(r"^\s*auth-user-pass\b", l)]
+    creds = _creds_file_path(name)
+    creds.write_text(f"{username}\n{password}\n")
+    os.chmod(creds, 0o600)
+    lines.append(f"auth-user-pass {creds}")
+    tc = _temp_config_path(name)
+    tc.write_text("\n".join(lines).rstrip() + "\n")
+    os.chmod(tc, 0o600)
+    return tc
+
+
+def _cleanup_vpn_files(name: str) -> None:
     _temp_config_path(name).unlink(missing_ok=True)
-    return cfg
+    _creds_file_path(name).unlink(missing_ok=True)
 
 
 def connect(name: str) -> dict:
@@ -275,24 +283,36 @@ def connect(name: str) -> dict:
         raise ValueError(f"already connected to '{cur.get('preset')}' — "
                          "disconnect first")
 
-    # a login is needed when the config doesn't carry one inline and none
-    # is stored — surface a clear error (the UI prompts before this call)
+    # stored login → creds file + auth-user-pass (see _effective_config)
     meta = _load_meta(name)
-    cfg_text = cfg.read_text(errors="replace")
-    if not meta.get("username") and not _has_inline_auth(cfg_text):
+    username = (meta.get("username") or "").strip()
+    password = meta.get("password") or ""
+    if not username or not password:
         raise ValueError("no credentials stored — enter the VPN username "
                          "and password first")
 
     log = _log_path(name)
     log.unlink(missing_ok=True)
-    run_cfg = _effective_config(name, cfg)
-    proc = sudo.popen(
-        "openvpn",
-        "--config", str(run_cfg),
-        "--log", str(log),
-        "--write-dn",
-        str(RUN_DIR / "vpn-dn"),
-    )
+    # stdout+stderr → the log file. This is the ONLY place openvpn's early
+    # option-parse errors surface (2.6 prints them to stdout, before it
+    # would ever open a --log file), and it also carries the runtime log,
+    # so the --log directive is dropped.
+    logf = log.open("ab")
+    run_cfg = _effective_config(name, cfg, username, password)
+    try:
+        proc = sudo.popen(
+            "openvpn",
+            "--config", str(run_cfg),
+            # NOTE: --write-dn is NOT a valid option on OpenVPN 2.6 — it
+            # aborts at option-parse. Removed.
+            stdout=logf,
+            stderr=logf,
+        )
+    except BaseException:
+        _cleanup_vpn_files(name)
+        logf.close()
+        raise
+    logf.close()  # parent's handle; the child holds its own fd
     _pid_file(name).write_text(str(proc.pid))
     # give it a moment: a bad config dies fast
     time.sleep(2.5)
@@ -301,10 +321,9 @@ def connect(name: str) -> dict:
         if log.exists():
             tail = log.read_text()[-600:]
         _pid_file(name).unlink(missing_ok=True)
-        _temp_config_path(name).unlink(missing_ok=True)
+        _cleanup_vpn_files(name)
         _release(name, proc)
         raise ValueError(f"openvpn exited immediately\n{tail}")
-    mp = _meta_path(name)
     meta = _load_meta(name)
     meta["last_connected"] = time.strftime("%Y-%m-%d %H:%M:%S")
     _save_meta(name, meta)
@@ -353,7 +372,7 @@ def disconnect() -> dict:
         _release(name, _procs.get(name))
         _pid_file(name).unlink(missing_ok=True)
         if name:
-            _temp_config_path(name).unlink(missing_ok=True)
+            _cleanup_vpn_files(name)
         return {"connected": False, "killed": killed}
 
     # connected outside ulaunch — best effort: kill the openvpn we found
