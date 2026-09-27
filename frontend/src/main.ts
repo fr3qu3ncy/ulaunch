@@ -5,6 +5,7 @@ import {
   vpnConnect, vpnDisconnect, vpnLog,
   toolsCheck, toolsInstall,
   systemStatus, systemAction, getSettings, putSettings,
+  sudoStatus,
   type Preset, type VpnStatus,
 } from './api'
 import { mountScan, type ScanHandle } from './scan'
@@ -54,6 +55,11 @@ async function api<T = any>(
     return await p()
   } catch (e: any) {
     if (retryOnSudo && e?.status === 401) {
+      /* a 401 on a passwordless account means the server cache expired —
+         retrying once succeeds without any prompt */
+      let pwless = false
+      try { pwless = !!(await sudoStatus()).passwordless } catch {}
+      if (pwless) { try { return await p() } catch { /* fall through */ } }
       if (await askSudo(sudoOpts)) return p()
       throw new Error('cancelled (sudo required)')
     }

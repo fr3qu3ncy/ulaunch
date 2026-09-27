@@ -277,6 +277,12 @@ def connect(name: str) -> dict:
     if not tool()["installed"]:
         raise ValueError("openvpn is not installed — use the INSTALL button "
                          "on the VPN screen first")
+    # after the one-time grant, openvpn runs via sudo WITHOUT a password
+    # (even once the password cache has expired) — check BEFORE requiring
+    # a cached password, otherwise the "never ask again" promise dies at
+    # the TTL boundary
+    if not sudo.available("openvpn"):
+        raise SudoRequired()
     cur = status()
     if cur["connected"] and cur.get("preset") == name:
         raise ValueError("already connected")
@@ -449,8 +455,9 @@ def grant_nopasswd() -> bool:
     password, so VPN connects don't need a fresh password every time.
 
     Writes a single, tightly-scoped rule to a dedicated drop-in file
-    (only the openvpn binary, nothing else) and validates it with
-    visudo. Requires a cached sudo password — the password the UI just
-    verified is used for this privileged write. Idempotent. Raises
-    SudoRequired when no password is cached yet."""
+    (only the openvpn binary, nothing else), staged in a temp file and
+    `sudo install`ed (no password across the child's stdin) and validated
+    with visudo. Works on passwordless accounts too (Raspberry Pi's
+    010_pi-nopasswd). Idempotent. Raises SudoRequired when no password
+    is cached and the user is not passwordless."""
     return sudo.grant_openvpn_nopasswd()

@@ -117,8 +117,8 @@ export function toolsInstall(tool: string) {
   return postJSON('/api/tools/install', { tool })
 }
 
-export function sudoStatus(): Promise<{ available: boolean; ttl_remaining: number }> {
-  return getJSON<{ available: boolean; ttl_remaining: number }>('/api/sudo/status')
+export function sudoStatus(): Promise<{ available: boolean; passwordless: boolean; ttl_remaining: number }> {
+  return getJSON<{ available: boolean; passwordless: boolean; ttl_remaining: number }>('/api/sudo/status')
 }
 
 export function sudoVerify(password: string): Promise<any> {

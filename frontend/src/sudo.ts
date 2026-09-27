@@ -5,8 +5,14 @@
  *  When opened for an OpenVPN action (opts.grantCheckbox) the modal also
  *  offers "Add OpenVPN to sudoers" — on UNLOCK, using the password just
  *  verified, it writes a dedicated openvpn-only NOPASSWD drop-in so VPN
- *  connects never need the password again. */
-import { sudoVerify, sudoOpenvpnNopasswd } from './api'
+ *  connects never need the password again.
+ *
+ *  PASSWORDLESS mode: if the user already has a NOPASSWD sudoers rule
+ *  (Raspberry Pi's 010_pi-nopasswd, a fresh distro account, …) there is
+ *  no password field at all — just the grant checkbox (optional) and
+ *  UNLOCK. The backend never feeds a password to `sudo -S` in that case
+ *  (a fed password would leak into the child's stdin). */
+import { sudoVerify, sudoStatus, sudoOpenvpnNopasswd } from './api'
 import * as overlay from './overlay'
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -33,16 +39,26 @@ export function isSudoModalOpen(): boolean {
   return open
 }
 
-/* Prompt for the sudo password. Resolves true when unlocked, false when the
-   user cancels. The password is held in memory only and auto-expires. */
+/* Prompt for the sudo password. Resolves true when unlocked (or, in
+   passwordless mode, when the user confirms), false when the user
+   cancels. The password is held in memory only and auto-expires. */
 export function askSudo(opts: SudoOpts = {}): Promise<boolean> {
   return new Promise<boolean>(res => {
     sudoResolver = res
-    renderSudoModal(opts)
+    open = true /* in flight — the async status probe runs before the
+                    modal renders; done() clears it on cancel/complete */
+    // probe the server for an existing NOPASSWD rule BEFORE rendering so
+    // passwordless users never see (or need) the password field
+    sudoStatus()
+      .then(st => {
+        if (!open || sudoResolver !== res) return /* cancelled meanwhile */
+        renderSudoModal(opts, !!st.passwordless)
+      })
+      .catch(() => { if (open) renderSudoModal(opts, false) })
   })
 }
 
-export function renderSudoModal(opts: SudoOpts = {}) {
+export function renderSudoModal(opts: SudoOpts = {}, passwordless = false) {
   document.getElementById('sudo-modal')?.remove()
   open = true
   const app = document.getElementById('app')!
@@ -51,14 +67,22 @@ export function renderSudoModal(opts: SudoOpts = {}) {
   const box = el('div', 'box')
   box.appendChild(el('div', 'title', 'ROOT ACCESS'))
   const p = el('p', 'sub')
-  p.textContent = opts.sub ||
-    'Enter your sudo password to continue. It is held in memory only and auto-expires.'
+  p.textContent = passwordless
+    ? (opts.grantCheckbox
+      ? 'This account already has passwordless sudo — no password needed.'
+      : opts.sub || 'Passwordless sudo — nothing to enter, just unlock.')
+    : opts.sub ||
+      'Enter your sudo password to continue. It is held in memory only and auto-expires.'
   box.appendChild(p)
-  const inp = el('input', 'text-input')
-  inp.type = 'password'
-  inp.autocomplete = 'off'
-  inp.placeholder = 'password'
-  box.appendChild(inp)
+
+  let inp: HTMLInputElement | null = null
+  if (!passwordless) {
+    inp = el('input', 'text-input')
+    inp.type = 'password'
+    inp.autocomplete = 'off'
+    inp.placeholder = 'password'
+    box.appendChild(inp)
+  }
 
   /* OpenVPN only: opt in to the one-time sudoers grant. */
   let grant: HTMLInputElement | null = null
@@ -69,7 +93,9 @@ export function renderSudoModal(opts: SudoOpts = {}) {
     grant.dataset.fk = 'sudo:grant'
     grant.tabIndex = 0
     const cl = el('span', 'check-label',
-      'Add OpenVPN to sudoers — never ask for this password again')
+      passwordless
+        ? 'Add OpenVPN to sudoers — keep passwordless openvpn'
+        : 'Add OpenVPN to sudoers — never ask for this password again')
     crow.appendChild(grant)
     crow.appendChild(cl)
     box.appendChild(crow)
@@ -78,16 +104,16 @@ export function renderSudoModal(opts: SudoOpts = {}) {
   const err = el('div', 'form-err')
   box.appendChild(err)
   const row = el('div', 'btn-row')
-  const cancel = el('button', 'btn', 'CANCEL')
+  const cancel = el('button', 'btn', passwordless ? 'SKIP' : 'CANCEL')
   const ok = el('button', 'btn', 'UNLOCK')
   ok.classList.add('active')
 
-  /* UNLOCK: verify the password first; only on success apply the grant
-     (which reuses the now-cached password). Grant failures are reported
-     in the modal — the unlock itself already happened. */
   const doUnlock = () => {
     err.textContent = ''
-    sudoVerify(inp.value)
+    const chain = passwordless
+      ? Promise.resolve()
+      : sudoVerify(inp!.value)
+    chain
       .then(() => {
         if (grant && grant.checked) {
           return sudoOpenvpnNopasswd()
@@ -102,7 +128,7 @@ export function renderSudoModal(opts: SudoOpts = {}) {
         if (g && err.textContent) {
           /* keep the modal up so the error is visible; UNLOCK again to
              close it (the grant is idempotent — it just re-applies) */
-          inp.value = ''
+          inp!.value = ''
           return
         }
         done(true)
@@ -119,9 +145,14 @@ export function renderSudoModal(opts: SudoOpts = {}) {
   ok.addEventListener('click', doUnlock)
 
   /* One keyboard cycle over the whole modal:
-       password → (checkbox) → UNLOCK → CANCEL → password → …
-     Tab AND Shift+Tab wrap; arrows follow the same cycle. */
-  const cycle: HTMLElement[] = [inp, ...(grant ? [grant] : []), ok, cancel]
+       [password] → (checkbox) → UNLOCK → CANCEL/SKIP → [password] → …
+     Tab AND Shift+Tab wrap; arrows follow the same cycle. Space AND
+     Enter toggle the checkbox when it is focused. */
+  const cycle: HTMLElement[] = [
+    ...(inp ? [inp] : []),
+    ...(grant ? [grant] : []),
+    ok, cancel,
+  ]
   const focusAt = (i: number) =>
     cycle[(i + cycle.length) % cycle.length].focus()
   const idxOf = (t: EventTarget | null) =>
@@ -140,6 +171,11 @@ export function renderSudoModal(opts: SudoOpts = {}) {
     } else if (e.key === 'Enter') {
       if (t === ok) { e.preventDefault(); doUnlock() }
       else if (t === cancel) { e.preventDefault(); done(false) }
+      else if (t === grant) { e.preventDefault(); grant!.checked = !grant!.checked }
+    } else if (e.key === ' ' && t === grant) {
+      /* Space toggles natively; prevent the page from scrolling */
+      e.preventDefault()
+      grant!.checked = !grant!.checked
     } else if (e.key === 'Escape') {
       e.preventDefault()
       done(false)
@@ -147,11 +183,13 @@ export function renderSudoModal(opts: SudoOpts = {}) {
     e.stopPropagation()
   }
   /* the password field additionally keeps Enter = unlock */
-  const onPw = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') { e.preventDefault(); doUnlock(); e.stopPropagation(); return }
-    onCyclic(inp)(e)
+  if (inp) {
+    const onPw = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') { e.preventDefault(); doUnlock(); e.stopPropagation(); return }
+      onCyclic(inp)(e)
+    }
+    inp.addEventListener('keydown', onPw)
   }
-  inp.addEventListener('keydown', onPw)
   if (grant) grant.addEventListener('keydown', onCyclic(grant))
   ok.addEventListener('keydown', onCyclic(ok))
   cancel.addEventListener('keydown', onCyclic(cancel))
@@ -161,5 +199,5 @@ export function renderSudoModal(opts: SudoOpts = {}) {
   m.appendChild(box)
   app.appendChild(m)
   overlay.wake()
-  setTimeout(() => inp.focus(), 30)
+  setTimeout(() => cycle[0].focus(), 30)
 }

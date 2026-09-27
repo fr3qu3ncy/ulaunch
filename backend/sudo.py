@@ -49,7 +49,42 @@ class Sudo:
                 return self._pw
             return None
 
-    def available(self) -> bool:
+    def passwordless(self) -> bool:
+        """True when the current user can sudo ANYTHING without a password
+        — a broad NOPASSWD rule, e.g. Raspberry Pi's 010_pi-nopasswd
+        (`pi ALL=(ALL) NOPASSWD: ALL`). In that case `sudo -S` never
+        consumes a password line, and feeding one would leak it into the
+        child's stdin. Uses `sudo -l` (lists the user's rules; needs no
+        password and is not affected by the timestamp cache)."""
+        try:
+            p = subprocess.run(["sudo", "-l"],
+                               capture_output=True, text=True, timeout=10)
+            return p.returncode == 0 and "NOPASSWD: ALL" in p.stdout
+        except Exception:
+            return False
+
+    def nopasswd_for(self, command: str) -> bool:
+        """True when the current user can run `command` via sudo without a
+        password (any NOPASSWD rule that covers it — ours or a broader
+        pre-existing one). Read-only, no password needed."""
+        try:
+            p = subprocess.run(
+                ["sudo", "-l", command],
+                capture_output=True, text=True, timeout=10,
+            )
+            return p.returncode == 0 and "NOPASSWD" in p.stdout
+        except Exception:
+            return False
+
+    def available(self, command: str | None = None) -> bool:
+        """True when a privileged op may proceed: the user is broadly
+        passwordless, the cached password is still valid, or (command
+        given) that specific command already has a NOPASSWD rule — e.g.
+        openvpn after the grant, once the password TTL has expired."""
+        if self.passwordless():
+            return True
+        if command is not None and self.nopasswd_for(command):
+            return True
         pw = self._cached()
         if not pw:
             return False
@@ -70,15 +105,24 @@ class Sudo:
         return False
 
     def run(self, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
-        """Run a privileged command with the cached password."""
-        pw = self._cached()
-        if not pw or not self.available():
+        """Run a privileged command with the cached password (or no
+        password at all when the user is already passwordless)."""
+        pw = self._pw_for()
+        if pw is None and not self.available(args[0] if args else None):
             raise SudoRequired()
         return subprocess.run(
             ["sudo", "-S", *args],
-            input=pw + "\n",
+            input=(pw + "\n" if pw else None),
             capture_output=True, text=True, timeout=timeout,
         )
+
+    def _pw_for(self) -> str | None:
+        """Password to feed `sudo -S` for a privileged op: the cached one,
+        or None when sudo is passwordless (feeding stdin there would leak
+        into the child)."""
+        if self.passwordless():
+            return None
+        return self._cached()
 
     def popen(self, *args: str,
               stderr: Any = None, stdout: Any = None) -> subprocess.Popen:
@@ -90,8 +134,8 @@ class Sudo:
         (EOF) makes a foreground openvpn exit. Close it via
         close_stdin() when the child is killed or exits.
         """
-        pw = self._cached()
-        if not pw or not self.available():
+        pw = self._pw_for()
+        if pw is None and not self.available(args[0] if args else None):
             raise SudoRequired()
 
         r, w = os.pipe()
@@ -107,6 +151,11 @@ class Sudo:
             start_new_session=True,
         )
         os.close(r)          # parent no longer needs the read end
+        if pw is None:
+            # passwordless sudo: nothing to feed; close the pipe so the
+            # child sees clean EOF instead of a stray password line
+            os.close(w)
+            return proc
         f = os.fdopen(w, "w")
         f.write(pw + "\n")
         f.flush()
@@ -139,14 +188,21 @@ class Sudo:
         run openvpn with `sudo openvpn …` WITHOUT a password — no further
         password prompts needed for VPN connects.
 
-        Requires a valid cached password (the password is used for this
-        privileged write). Raises SudoRequired when the cache is empty
-        (the client prompts first). Returns True when the drop-in is in
-        place (it may have existed already), False on a failed write.
+        Works whether or not the user already has passwordless sudo: the
+        rule is staged in a temp file and `sudo install`ed (no stdin at
+        all, atomic, root-owned 0440). Raises SudoRequired when the cache
+        is empty AND sudo is not passwordless (the client prompts first).
+        Returns True when the drop-in is in place (it may have existed
+        already), False on a failed write.
         """
-        pw = self._cached()
-        if not pw or not self.available():
+        import tempfile
+        if not self.available():
             raise SudoRequired()
+        # the password to feed the privileged writes below — the cached
+        # one when sudo needs it, None when the user is passwordless
+        # (feeding a password then would leak into the child's stdin).
+        pw = self._pw_for()
+        feed = (pw + "\n") if pw else None
         try:
             import pwd
             user = pwd.getpwuid(os.getuid()).pw_name
@@ -159,44 +215,62 @@ class Sudo:
         ovpn = shutil.which("openvpn") or "/usr/sbin/openvpn"
         rule = f"{user} ALL=(ALL) NOPASSWD: {ovpn}"
         target = "/etc/sudoers.d/ulaunch-openvpn"
-        # verify the password is still good (and refresh the TTL), then
-        # write the drop-in; `tee` is the one write target that sudo
-        # allows in a NOPASSWD-style command, but here we pass the cached
-        # password to `sudo -S tee` directly.
-        p = subprocess.run(
-            ["sudo", "-S", "tee", target],
-            input=f"{pw}\n{rule}\n",
-            capture_output=True, text=True, timeout=30,
-        )
-        if p.returncode != 0:
-            return False
-        # the sudoers drop-in must not be group/world writable or sudo
-        # refuses to use it. `sudo tee` already creates it root-owned at
-        # 0644 — tighten to 0440. Best effort: when the ulaunch server
-        # itself runs unprivileged (the normal case) it cannot chmod a
-        # root-owned file, so the mode stays 0644 — still valid sudoers,
-        # just not as tight as it could be.
+        # stage the rule in a private temp file and install it with the
+        # correct owner+mode in one privileged step. Deliberately NO
+        # `sudo -S` stdin here: when sudo is passwordless (e.g. Raspberry
+        # Pi's 010_pi-nopasswd) `sudo -S` never consumes a password line
+        # and the child (tee) would receive the password as its first
+        # input line — corrupting the drop-in. `install` has no stdin
+        # coupling at all.
+        staged = None
         try:
-            os.chmod(target, 0o440)
-        except OSError:
-            pass
-        v = subprocess.run(
-            ["sudo", "-S", "visudo", "-cf", target],
-            input=pw + "\n", capture_output=True, text=True, timeout=30,
-        )
-        if v.returncode != 0:
-            # malformed rule (shouldn't happen) — don't leave a broken
-            # drop-in that breaks the user's normal sudo
-            subprocess.run(["sudo", "-S", "rm", "-f", target],
-                           input=pw + "\n", capture_output=True, text=True,
-                           timeout=30)
-            return False
-        return True
+            fd, staged = tempfile.mkstemp(prefix="ulaunch-openvpn-", suffix=".rule")
+            with os.fdopen(fd, "w") as f:
+                f.write(rule + "\n")
+            os.chmod(staged, 0o400)
+            p = subprocess.run(
+                ["sudo", "-S", "install", "-o", "root", "-g", "root",
+                 "-m", "0440", staged, target],
+                input=feed, capture_output=True, text=True, timeout=30,
+            )
+            if p.returncode != 0:
+                return False
+            v = subprocess.run(
+                ["sudo", "-S", "visudo", "-cf", target],
+                input=feed, capture_output=True, text=True, timeout=30,
+            )
+            if v.returncode != 0:
+                # malformed rule (shouldn't happen) — don't leave a broken
+                # drop-in that breaks the user's normal sudo
+                subprocess.run(["sudo", "-S", "rm", "-f", target],
+                               input=feed, capture_output=True, text=True,
+                               timeout=30)
+                return False
+            return True
+        finally:
+            # the staged rule may contain user names/paths — never leave it
+            if staged:
+                try:
+                    os.unlink(staged)
+                except OSError:
+                    pass
 
     def has_openvpn_nopasswd(self) -> bool:
-        """True when the NOPASSWD drop-in for openvpn exists for the
-        current user. Read-only — no password needed (the file is
-        root-owned but world-readable at 0440)."""
+        """True when openvpn needs NO password for the current user — either
+        because they're already passwordless (Raspberry Pi's
+        010_pi-nopasswd, or any NOPASSWD sudoers rule) OR via our own
+        drop-in. Read-only, no password needed."""
+        if self.passwordless():
+            return True
+        try:
+            p = subprocess.run(
+                ["sudo", "-n", "-l", "openvpn"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if p.returncode == 0 and "NOPASSWD" in p.stdout:
+                return True
+        except Exception:
+            pass
         try:
             import pwd
             user = pwd.getpwuid(os.getuid()).pw_name
@@ -215,6 +289,7 @@ class Sudo:
                 if self._pw else 0
         return {
             "available": self.available(),
+            "passwordless": self.passwordless(),
             "ttl_remaining": remaining,
             "openvpn_nopasswd": self.has_openvpn_nopasswd(),
         }
