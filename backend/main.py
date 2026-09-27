@@ -5,6 +5,7 @@ kiosk browser. Closing the browser (via /api/exit) ends the launcher,
 whose trap cleans up the server. Desktop re-launch = run ./ulaunch again.
 """
 import asyncio
+import json
 import os
 import shutil
 import signal
@@ -46,9 +47,29 @@ def _kill_browser() -> bool:
         return False
 
 
+def _build_info() -> dict:
+    """The frontend build stamps backend/static/build.json (commit + date)
+    so the About screen can show which bundle is actually running."""
+    try:
+        return json.loads((BASE / "static" / "build.json").read_text())
+    except Exception:
+        return {}
+
+
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True, "name": "ulaunch", "port": PORT}
+    import platform
+    return {
+        "ok": True,
+        "name": "ulaunch",
+        "port": PORT,
+        "build": _build_info(),
+        "os": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+        },
+    }
 
 
 @app.get("/api/net")

@@ -69,13 +69,63 @@ html, body {
 .hdr .stat.ok b { color: var(--green); text-shadow: 0 0 8px rgba(61, 255, 158, 0.6); }
 .hdr .stat.warn b { color: var(--amber); }
 
-/* ── nav tiles (big, touch+keyboard friendly) ── */
+/* ── nav tiles (big, touch+keyboard friendly) ──
+   The row is a carousel: the tile strip is wider than the viewport and
+   scrolls horizontally; thin triangle arrows sit at each edge (visible
+   only while there are more tiles in that direction). */
 .nav {
-  display: flex; gap: 1em; padding: 1em 1.4em;
+  display: flex; align-items: stretch; gap: 0.4em;
+  padding: 1em 1.4em;
   flex: 0 0 auto;
+  overflow: hidden;
 }
+.nav-strip {
+  display: flex; gap: 1em;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;           /* firefox */
+  scroll-behavior: smooth;
+}
+.nav-strip::-webkit-scrollbar { display: none; }
+/* the edge arrows: as tall as the tiles, as thin as possible, a narrow
+   triangle pointing the way they scroll */
+.nav-arrow {
+  flex: 0 0 auto;
+  width: 1.15em;
+  align-self: stretch;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; cursor: pointer;
+  outline: none;
+  color: var(--cyan);
+  transition: all 0.12s ease;
+  user-select: none;
+}
+.nav-arrow.hidden { display: none; }
+.nav-arrow .tri {
+  display: block;
+  width: 0.45em; height: 1.7em;
+}
+.nav-arrow-left .tri {
+  border-top: 0.85em solid transparent;
+  border-bottom: 0.85em solid transparent;
+  border-left: 0.45em solid var(--cyan);
+  filter: drop-shadow(0 0 6px rgba(0, 245, 255, 0.7));
+}
+.nav-arrow-right .tri {
+  border-top: 0.85em solid transparent;
+  border-bottom: 0.85em solid transparent;
+  border-right: 0.45em solid var(--cyan);
+  filter: drop-shadow(0 0 6px rgba(0, 245, 255, 0.7));
+}
+.nav-arrow:hover, .nav-arrow:focus-visible { color: var(--magenta); }
+.nav-arrow:hover .tri, .nav-arrow:focus-visible .tri { border-color: transparent; }
+.nav-arrow-left:hover .tri, .nav-arrow-left:focus-visible .tri { border-left-color: var(--magenta); }
+.nav-arrow-right:hover .tri, .nav-arrow-right:focus-visible .tri { border-right-color: var(--magenta); }
 .tile {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 12em;   /* wide enough that 5+ tools overflow the viewport */
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 0.25em;
   padding: 1em 0.5em;
@@ -134,6 +184,7 @@ html, body {
 /* keyboard focus — dashed outline, clearly distinct from the accent glow
    of the *selected* tool */
 .tile:focus-visible,
+.nav-arrow:focus-visible,
 .hdr .logo:focus-visible,
 .scan-opt:focus-visible,
 .toggle:focus-visible,
@@ -362,6 +413,56 @@ html, body {
 .about {
   color: var(--dim);
   font-size: 1.05em; line-height: 1.6; letter-spacing: 0.05em;
+}
+
+/* ── about screen (the hacker one) ── */
+.about-screen {
+  align-items: center;
+  justify-content: center;
+  gap: 1.4em;
+}
+.about-title {
+  font-family: var(--font-display);
+  font-size: 1.3em; font-weight: 900;
+  letter-spacing: 0.35em;
+  color: var(--cyan);
+  text-transform: uppercase;
+  text-shadow: 0 0 14px rgba(0, 245, 255, 0.9), 0 0 46px rgba(0, 245, 255, 0.35);
+}
+.about-term {
+  background: rgba(0, 0, 0, 0.62);
+  border: 1px solid rgba(61, 255, 158, 0.35);
+  border-radius: 8px;
+  box-shadow: 0 0 34px rgba(61, 255, 158, 0.14), inset 0 0 60px rgba(61, 255, 158, 0.04);
+  padding: 1.6em 2em;
+  font-family: 'Courier New', monospace;
+  font-size: 1.02em; line-height: 1.75;
+  color: var(--green);
+  text-shadow: 0 0 8px rgba(61, 255, 158, 0.5);
+  white-space: pre-wrap;
+  min-width: 620px; max-width: 900px;
+}
+.about-cursor {
+  display: inline-block;
+  width: 0.62em; height: 1.15em;
+  margin-left: 0.2em;
+  background: var(--green);
+  box-shadow: 0 0 10px rgba(61, 255, 158, 0.9);
+  vertical-align: text-bottom;
+  animation: pulse 1.1s steps(1) infinite;
+}
+.about-hint {
+  color: var(--dim);
+  font-size: 1em; letter-spacing: 0.14em; text-transform: uppercase;
+}
+.about-hint kbd {
+  font-family: var(--font-body);
+  color: var(--green);
+  border: 1px solid rgba(61, 255, 158, 0.4);
+  border-radius: 3px;
+  padding: 0 0.45em;
+  margin-right: 0.35em;
+  background: rgba(61, 255, 158, 0.06);
 }
 
 /* ── footer hint ── */

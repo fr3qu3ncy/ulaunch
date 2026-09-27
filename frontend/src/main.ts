@@ -1,6 +1,6 @@
 import './styles.css'
 import {
-  fetchNet, exitApp, fmtUptime, type NetInfo,
+  fetchNet, fetchHealth, exitApp, fmtUptime, type NetInfo,
   vpnPresets, vpnAddPreset, vpnDeletePreset, vpnSetCreds, vpnStatus,
   vpnConnect, vpnDisconnect, vpnLog,
   toolsCheck, toolsInstall,
@@ -13,18 +13,18 @@ import * as overlay from './overlay'
 import { askSudo, type SudoOpts } from './sudo'
 import { askVpnCreds } from './vpnCreds'
 
-type Screen = 'home' | 'vpn' | 'scan' | 'system' | 'settings'
+type Screen = 'network' | 'about' | 'vpn' | 'scan' | 'system' | 'settings'
 
 const TILES: { id: Screen; label: string; ico: string; accent: string }[] = [
+  { id: 'network', label: 'NETWORK', ico: '⌗', accent: 'cyan' },
   { id: 'vpn', label: 'VPN', ico: '⛨', accent: 'green' },
   { id: 'scan', label: 'SCAN', ico: '⌖', accent: 'magenta' },
   { id: 'system', label: 'SYSTEM', ico: '⏻', accent: 'amber' },
   { id: 'settings', label: 'SETTINGS', ico: '⚙', accent: '' },
 ]
-const ORDER: Screen[] = ['home', 'vpn', 'scan', 'system', 'settings']
 
 const app = document.getElementById('app')!
-let screen: Screen = 'home'
+let screen: Screen = 'network'
 let escOpen = false
 let preEscFk: string | undefined = undefined
 let lastNet: NetInfo | null = null
@@ -72,11 +72,11 @@ function header(net: NetInfo | null): HTMLElement {
   const h = el('header', 'hdr')
   const logo = el('button', 'logo')
   logo.type = 'button'
-  logo.title = 'Home'
+  logo.title = 'About'
   logo.dataset.fk = 'logo'
   logo.innerHTML = 'ULAUNCH<span>_</span>'
   logo.style.cssText = 'background:none;border:none;cursor:pointer'
-  logo.addEventListener('click', () => go('home'))
+  logo.addEventListener('click', () => go('about'))
   h.appendChild(logo)
   h.appendChild(el('div', 'spacer'))
   if (net) {
@@ -102,8 +102,26 @@ function header(net: NetInfo | null): HTMLElement {
   return h
 }
 
+/* The tool icon row: a horizontally scrollable strip that is WIDER than
+   the viewport, so the tiles overflow it. ←/→ walk the tiles ONE AT A
+   TIME (wrapping) and the strip auto-scrolls to follow the cursor. The
+   edge arrows are visual indicators (plus clickable page-scrolls) — they
+   show while there are still tiles off-screen in that direction. They are
+   NOT keyboard stops: the three-stop Tab cycle is logo → [row] → content. */
 function nav(): HTMLElement {
-  const n = el('nav', `nav${screen !== 'home' ? ' has-active' : ''}`)
+  const n = el('nav', `nav${screen !== 'about' ? ' has-active' : ''}`)
+  const mkArrow = (cls: string, title: string, dir: 1 | -1) => {
+    const a = el('button', `nav-arrow ${cls}`)
+    a.type = 'button'
+    a.tabIndex = -1
+    a.dataset.fk = cls === 'nav-arrow-left' ? 'nav:arrowleft' : 'nav:arrowright'
+    a.innerHTML = '<span class="tri"></span>'
+    a.title = title
+    a.addEventListener('click', () => pageScroll(dir))
+    return a
+  }
+  const left = mkArrow('nav-arrow-left', 'more tools to the left', -1)
+  const strip = el('div', 'nav-strip')
   for (const t of TILES) {
     const d = el('button', `tile ${screen === t.id ? 'active' : ''}`)
     d.dataset.accent = t.accent
@@ -112,9 +130,79 @@ function nav(): HTMLElement {
     d.tabIndex = 0
     d.innerHTML = `<span class="ico">${t.ico}</span>${t.label}`
     d.addEventListener('click', () => go(t.id))
-    n.appendChild(d)
+    strip.appendChild(d)
   }
+  const right = mkArrow('nav-arrow-right', 'more tools to the right', 1)
+  n.appendChild(left)
+  n.appendChild(strip)
+  n.appendChild(right)
+  updateNavArrows()
   return n
+}
+/* show/hide the edge arrows based on how far the strip can scroll */
+function updateNavArrows() {
+  const strip = app.querySelector<HTMLElement>('.nav-strip')
+  if (!strip) return
+  const n = strip.parentElement as HTMLElement
+  const left = n.querySelector<HTMLElement>('.nav-arrow-left')
+  const right = n.querySelector<HTMLElement>('.nav-arrow-right')
+  const over = strip.scrollWidth - strip.clientWidth
+  const canL = strip.scrollLeft > 2
+  const canR = strip.scrollLeft < over - 2
+  if (left) left.classList.toggle('hidden', !canL)
+  if (right) right.classList.toggle('hidden', !canR)
+}
+/* clickable edge arrow: scroll the strip one page in `dir`; if the cursor
+   (a focused tile) ends up off-screen, park it on the nearest visible
+   tile at that edge */
+function pageScroll(dir: 1 | -1) {
+  const strip = app.querySelector<HTMLElement>('.nav-strip')
+  if (!strip) return
+  strip.scrollBy({ left: dir * Math.max(60, strip.clientWidth - 80), behavior: 'smooth' })
+  const tiles = Array.from(strip.querySelectorAll<HTMLElement>('.tile'))
+  if (tiles.length) {
+    const ae = document.activeElement as HTMLElement | null
+    if (ae && ae.classList.contains('tile')) {
+      requestAnimationFrame(() => {
+        const nr = strip.getBoundingClientRect()
+        const home = tiles.find(t => {
+          const r = t.getBoundingClientRect()
+          return r.left >= nr.left - 1 && r.right <= nr.right + 1
+        }) ?? tiles[dir === 1 ? tiles.length - 1 : 0]
+        home.focus({ preventScroll: true })
+        updateNavArrows()
+      })
+    } else {
+      updateNavArrows()
+    }
+  }
+}
+/* scroll the strip just enough to fully reveal a tile (cursor follow) */
+function revealTile(t: HTMLElement) {
+  const strip = app.querySelector<HTMLElement>('.nav-strip')
+  if (!strip) return
+  const nr = strip.getBoundingClientRect()
+  const tr = t.getBoundingClientRect()
+  const M = 10
+  if (tr.left < nr.left + M) {
+    strip.scrollBy({ left: tr.left - nr.left - M, behavior: 'smooth' })
+  } else if (tr.right > nr.right - M) {
+    strip.scrollBy({ left: tr.right - nr.right + M, behavior: 'smooth' })
+  }
+  updateNavArrows()
+}
+/* walk the tile cursor one step (wrapping), the strip follows */
+function stepTile(dir: 1 | -1) {
+  const strip = app.querySelector<HTMLElement>('.nav-strip')
+  const tiles = Array.from(strip?.querySelectorAll<HTMLElement>('.tile') || [])
+  if (!tiles.length) return
+  const ae = document.activeElement as HTMLElement | null
+  const idx = ae ? tiles.indexOf(ae) : -1
+  const next = idx < 0
+    ? (dir === 1 ? 0 : tiles.length - 1)
+    : (idx + dir + tiles.length) % tiles.length
+  tiles[next].focus({ preventScroll: true })
+  revealTile(tiles[next])
 }
 
 /* ───────────────────────── HOME ───────────────────────── */
@@ -162,6 +250,55 @@ function homeContent(net: NetInfo | null): HTMLElement {
     card.appendChild(el('div', 'c-sub', net.vpn.interfaces.join(', ')))
     vc.appendChild(card)
     c.appendChild(vc)
+  }
+  return c
+}
+
+/* ───────────────────────── ABOUT (logo → the hacker screen) ───────────────────────── */
+/* A fake terminal boot log: the identity, the running build (commit + date,
+   fetched from the server so it reflects the bundle actually on disk),
+   the machine, and a status line. No interactive controls — the keyboard
+   stops are the logo (→ row) and Esc (menu). */
+let aboutBuild: { commit?: string; date?: string } = {}
+let aboutOs: { system: string; release: string; machine: string } =
+  { system: '…', release: '…', machine: '…' }
+let aboutBooted = false
+
+function aboutContent(): HTMLElement {
+  const c = el('div', 'content about-screen')
+  c.appendChild(el('div', 'about-title', 'ULAUNCH // SYSTEM IDENTITY'))
+  const term = el('pre', 'about-term')
+  const commit = aboutBuild.commit || 'local-build'
+  const date = aboutBuild.date || '—'
+  const up = lastNet ? fmtUptime(lastNet.uptime_s) : '—'
+  const lines = [
+    'ulaunch@uconsole:~$ whoami',
+    'ULAUNCH_ — network & system launcher',
+    '',
+    'ulaunch@uconsole:~$ uname -a',
+    `${aboutOs.system} ${aboutOs.release} (${aboutOs.machine})`,
+    '',
+    'ulaunch@uconsole:~$ ulaunch --version',
+    `build ${commit} · ${date}`,
+    `uptime ${up} · local only · 127.0.0.1:8317`,
+    '',
+    'access granted. welcome back, operator.',
+  ]
+  term.textContent = lines.join('\n')
+  const cur = el('span', 'about-cursor')
+  term.appendChild(cur)
+  c.appendChild(term)
+  const hint = el('div', 'about-hint')
+  hint.innerHTML = '<kbd>Esc</kbd> menu · <kbd>→</kbd> tools'
+  c.appendChild(hint)
+
+  if (!aboutBooted) {
+    aboutBooted = true
+    fetchHealth().then(h => {
+      aboutBuild = h.build || {}
+      aboutOs = h.os || aboutOs
+      if (screen === 'about') render()
+    }).catch(() => {})
   }
   return c
 }
@@ -531,8 +668,8 @@ function flashSaved(c: HTMLElement) {
 function footer(): HTMLElement {
   const f = el('footer', 'foot')
   f.innerHTML =
-    '<span><kbd>←→</kbd>move</span><span><kbd>Enter</kbd>open tool</span>' +
-    '<span><kbd>←→</kbd>/<kbd>Tab</kbd>in tool</span><span><kbd>⌫</kbd>/<kbd>Esc</kbd>back</span>' +
+    '<span><kbd>←→</kbd>icon row</span><span><kbd>Enter</kbd>open tool</span>' +
+    '<span><kbd>Tab</kbd>logo · row · options</span><span><kbd>⌫</kbd>/<kbd>Esc</kbd>back</span>' +
     '<span><kbd>Esc</kbd>menu</span>'
   return f
 }
@@ -567,7 +704,8 @@ function render() {
   app.innerHTML = ''
   app.appendChild(header(lastNet))
   app.appendChild(nav())
-  if (screen === 'home') app.appendChild(homeContent(lastNet))
+  if (screen === 'network') app.appendChild(homeContent(lastNet))
+  else if (screen === 'about') app.appendChild(aboutContent())
   else if (screen === 'vpn') app.appendChild(vpnContent())
   else if (screen === 'scan') {
     const holder = el('div', 'content scan-holder')
@@ -582,27 +720,62 @@ function render() {
 
   if (fk) {
     const restored = app.querySelector<HTMLElement>(`[data-fk="${fk}"]`)
-    if (restored && !(restored as HTMLButtonElement).disabled) restored.focus()
+    if (restored && !(restored as HTMLButtonElement).disabled) {
+      restored.focus()
+      /* the strip is rebuilt on every render (scroll resets to 0) — if the
+         restored tile landed off-screen, scroll the strip so the focus
+         outline is visible again */
+      if (restored.classList.contains('tile')) {
+        const strip = app.querySelector<HTMLElement>('.nav-strip')
+        const nr = strip?.getBoundingClientRect()
+        const tr = restored.getBoundingClientRect()
+        if (strip && nr && (tr.left < nr.left - 1 || tr.right > nr.right + 1)) {
+          strip.scrollBy({
+            left: (tr.left + tr.right) / 2 - (nr.left + nr.right) / 2,
+            behavior: 'auto',
+          })
+        }
+        updateNavArrows()
+      }
+    }
   }
 }
 
 /* ───────────────────────── state ───────────────────────── */
-/* Keyboard model (two levels):
-   TOOL ROW (logo + tiles):  ←/→ move between tools, Enter drops into the
-     tool under the cursor (focus lands on its first control).
-   INSIDE A TOOL:            ←/→ (and ↑/↓) cycle the tool's own controls in
-     DOM order — this is how you walk the options.
-                             Backspace exits the tool: focus returns to its
-                             tile in the row.
-                             Tab/Shift+Tab still work (same cycle, wrapping).
-   Anywhere else (body after a re-render, no active control): ←/→ hop tools,
-     Enter opens the active tool. */
+/* Keyboard model (three tab stops):
+   TAB:  logo → [tool row] → content, wrapping. The whole tool row is ONE
+     tab stop — Tab steps out of it, Shift+Tab back in.
+   TOOL ROW (the scrollable tile strip): ←/→ move between the tool icons,
+     ONE AT A TIME (wrapping); the strip auto-scrolls to follow the cursor.
+     Enter drops into the tool under the cursor (focus lands on its first
+     control). The edge arrows are visual indicators, not keyboard stops.
+   INSIDE A TOOL: ←/→ (and ↑/↓) cycle the tool's own controls in DOM order
+     — this is how you walk the options. Backspace or Esc exits the tool:
+     focus returns to its tile. Tab/Shift+Tab cycle the tool's controls.
+   ABOUT: no content controls — focus stays on the logo (Tab → the row). */
 function activeTile(): HTMLElement | null {
   return app.querySelector<HTMLElement>('.nav .tile.active')
 }
 function focusContentFirst(): void {
   const first = app.querySelector<HTMLElement>('.content button:not([disabled]), .content input:not([disabled]), .content select:not([disabled]), .content textarea:not([disabled]), .content [tabindex="0"]:not([disabled])')
   first?.focus()
+}
+function firstContentEl(): HTMLElement | null {
+  return app.querySelector<HTMLElement>('.content button:not([disabled]), .content input:not([disabled]), .content select:not([disabled]), .content textarea:not([disabled]), .content [tabindex="0"]:not([disabled])')
+}
+function lastContentEl(): HTMLElement | null {
+  const c = app.querySelector<HTMLElement>('.content')
+  if (!c) return null
+  const list = focusables(c)
+  return list.length ? list[list.length - 1] : null
+}
+function firstTileEl(): HTMLElement | null {
+  return app.querySelector<HTMLElement>('.nav-strip .tile')
+}
+/* where the cursor lands when entering the row: the active tool's tile
+   (its logical position), or the first tile when no tool is active */
+function rowEntryTile(): HTMLElement | null {
+  return activeTile() ?? firstTileEl()
 }
 
 async function go(s: Screen) {
@@ -612,10 +785,17 @@ async function go(s: Screen) {
   render()
   if (s === 'vpn') { await refreshVpn(); startLogPoll() }
   if (prev === 'vpn') stopLogPoll()
-  /* drop focus into the tool (its first control) so the user is in the
-     tool they picked. For SCAN the options load async — mountScan owns
-     the initial focus (focuses the first option once they arrive). */
-  if (s === 'home') app.querySelector<HTMLElement>('.logo')?.focus()
+  /* ABOUT has no content controls — focus stays on the logo.
+     NETWORK is display-only (like the old home) — focus lands on its
+     tile, so arrows can walk the row and Enter on the tile re-enters.
+     Every other tool: drop focus into its first control.
+     For SCAN the options load async — mountScan owns the initial focus. */
+  if (s === 'about') app.querySelector<HTMLElement>('.logo')?.focus()
+  else if (s === 'network') {
+    const t = app.querySelector<HTMLElement>('.nav-strip .tile[data-screen="network"]')
+    t?.focus({ preventScroll: true })
+    if (t) revealTile(t)
+  }
   else if (s !== 'scan') focusContentFirst()
 }
 
@@ -681,16 +861,18 @@ function isTextInput(t: HTMLElement | null): boolean {
   return false
 }
 
-/* the tool row: logo first, then the four tiles, in order */
-function rowEl(): HTMLElement[] {
-  return [
-    app.querySelector<HTMLElement>('.logo')!,
-    ...Array.from(app.querySelectorAll<HTMLElement>('.nav .tile')),
-  ]
-}
-function onRow(t: HTMLElement | null): number {
-  if (!t) return -1
-  return rowEl().indexOf(t)
+/* where does the keyboard cursor currently sit? */
+type Stop = 'logo' | 'tile' | 'arrow' | 'content' | 'body'
+function stopOf(t: HTMLElement | null): Stop {
+  if (!t || t === document.body) return 'body'
+  if (t.classList.contains('logo')) return 'logo'
+  if (t.classList.contains('tile')) return 'tile'
+  if (t.classList.contains('nav-arrow')) return 'arrow'
+  if (t.dataset && t.dataset.fk && t.dataset.fk !== 'logo') {
+    const c = app.querySelector<HTMLElement>('.content')
+    if (c && c.contains(t)) return 'content'
+  }
+  return 'body'
 }
 /* cycle focus within the tool's content: idx + dir, wrapping. Returns the
    element that got focus (null if content is empty). */
@@ -707,9 +889,11 @@ function stepInContent(dir: 1 | -1): HTMLElement | null {
   list[next].focus()
   return list[next]
 }
-/* Enter on the tool row: drop into the tool under the cursor. */
+/* Enter on the tool row: drop into the tool under the cursor.
+   Enter on the logo: open the About screen (no content controls, so
+   focus stays on the logo). */
 function enterTool(t: HTMLElement): void {
-  if (t.classList.contains('logo')) { void go('home'); return }
+  if (t.classList.contains('logo')) { void go('about'); return }
   const s = t.dataset.screen as Screen
   if (s && s !== screen) void go(s)
   else focusContentFirst()
@@ -812,12 +996,13 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   const t = e.target as HTMLElement | null
   const content = app.querySelector<HTMLElement>('.content')
   const inContent = t && t !== document.body && content?.contains(t)
+  const stop = stopOf(t)
 
   /* Esc: inside a tool → exit to the tool row (from any control, incl. a
-     text field); on the row / home / body → open the standby menu. */
+     text field); on the logo / row / body → open the standby menu. */
   if (e.key === 'Escape') {
     e.preventDefault()
-    if (screen !== 'home' && (t === null || t === document.body || inContent)) {
+    if (screen !== 'about' && (t === null || t === document.body || inContent)) {
       activeTile()?.focus()
     } else {
       toggleEsc(true)
@@ -825,21 +1010,43 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
     return
   }
 
-  /* Tab: next/previous control within the tool. This is also the reliable
-     way OUT of a text input (arrows move the caret, Backspace edits), so
-     it must work from every control type. On the tool row, Tab moves
-     between tiles like the arrows. */
+  /* Tab: the three-stop model — logo → [tool row] → content, wrapping.
+     Inside content, Tab/Shift+Tab cycle the tool's own controls (also
+     the reliable way OUT of a text input, where arrows move the caret).
+     The whole tool row is ONE stop: Tab leaves it, Shift+Tab re-enters
+     it; arrows walk it from either entry point. */
   if (e.key === 'Tab') {
-    if (inContent) {
-      e.preventDefault()
-      stepInContent(e.shiftKey ? -1 : 1)
+    e.preventDefault()
+    const d = e.shiftKey ? -1 : 1
+    if (stop === 'content') { stepInContent(d as 1 | -1); return }
+    if (stop === 'body') {
+      const first = firstContentEl()
+      if (first) { first.focus(); return }
+    }
+    if (stop === 'logo') {
+      if (d === 1) {
+        const entry = rowEntryTile()
+        if (entry) { entry.focus({ preventScroll: true }); revealTile(entry) }
+      } else {
+        const last = lastContentEl()
+        if (last) last.focus()
+        else rowEntryTile()?.focus()
+      }
       return
     }
-    const idx = onRow(t)
-    if (idx >= 0) {
-      e.preventDefault()
-      const d = e.shiftKey ? -1 : 1
-      rowEl()[(idx + d + rowEl().length) % rowEl().length]?.focus()
+    if (stop === 'tile' || stop === 'arrow') {
+      if (d === 1) {
+        /* Tab from the icon bar drops into the CURRENTLY ACTIVE tool's
+           options/results (the open screen's content) — NOT necessarily
+           the highlighted tile. Screens without content controls (about,
+           network) wrap back to the logo. */
+        const first = firstContentEl()
+        if (first) first.focus()
+        else app.querySelector<HTMLElement>('.logo')?.focus()
+      } else {
+        app.querySelector<HTMLElement>('.logo')?.focus()
+      }
+      return
     }
     return
   }
@@ -848,7 +1055,7 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
      row. Never inside a text-entry field (it edits there). A <select> has
      no native Backspace behaviour, so exiting works there too. */
   if (e.key === 'Backspace') {
-    if (screen !== 'home' &&
+    if (screen !== 'about' &&
         (t === null || t === document.body || inContent) &&
         !isTextInput(t)) {
       e.preventDefault()
@@ -859,10 +1066,25 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   }
 
   if (e.key === 'Enter') {
-    const idx = onRow(t)
-    if (idx >= 0) {
+    if (stop === 'logo' || stop === 'tile') {
       e.preventDefault()
       enterTool(t as HTMLElement)
+      return
+    }
+    if (stop === 'arrow') {
+      e.preventDefault()
+      /* activate the edge: jump to the nearest fully-visible tile at that
+         edge (the arrow's own click/Enter does the scrolling) */
+      const dir: 1 | -1 = (t as HTMLElement).classList.contains('nav-arrow-right') ? 1 : -1
+      const strip = app.querySelector<HTMLElement>('.nav-strip')
+      if (strip) {
+        const nr = strip.getBoundingClientRect()
+        const tiles = Array.from(strip.querySelectorAll<HTMLElement>('.tile')).filter(x => {
+          const r = x.getBoundingClientRect()
+          return r.left >= nr.left - 1 && r.right <= nr.right + 1
+        })
+        tiles[dir === 1 ? tiles.length - 1 : 0]?.focus()
+      }
       return
     }
     /* elsewhere: let the control's own click/activate happen natively */
@@ -904,23 +1126,40 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   }
 
   e.preventDefault()
-  const idx = onRow(t)
-  if (idx >= 0) {
-    /* on the tool row: ←/→ move between tools (wrapping) */
-    rowEl()[(idx + dir + rowEl().length) % rowEl().length]?.focus()
+
+  /* ── TOOL ROW: ←/→ move between the tool icons, ONE AT A TIME
+     (wrapping); the strip auto-scrolls to keep the cursor visible.
+     Tab is the way OUT of the row (see the Tab handler above). An
+     edge arrow can only hold focus after a mouse click — treat it as
+     being on the row. */
+  if (stop === 'tile' || stop === 'arrow') {
+    stepTile(dir)
     return
   }
 
-  if (screen !== 'home' && content && (t === null || t === document.body || content.contains(t))) {
-    /* inside a tool: ←/→ (and ↑/↓) cycle the tool's own controls —
-       this is the way to navigate a tool's options. */
+  /* ── logo ──: → enters the row (first icon), ← exits to the end of the
+     content */
+  if (stop === 'logo') {
+    if (dir === 1) {
+      const first = firstTileEl()
+      if (first) { first.focus({ preventScroll: true }); revealTile(first) }
+    } else {
+      const last = lastContentEl()
+      if (last) last.focus()
+      else firstTileEl()?.focus()
+    }
+    return
+  }
+
+  /* ── content ──: inside a tool, ←/→ (and ↑/↓) cycle the tool's own
+     controls — this is the way to walk a tool's options. */
+  if (screen !== 'about' && content && inContent) {
     stepInContent(dir)
     return
   }
 
-  /* anywhere else (body after a re-render, home): ←/→ hop tools */
-  const target = ORDER[(ORDER.indexOf(screen) + dir + ORDER.length) % ORDER.length]
-  void go(target)
+  /* anywhere else (body after a re-render): ←/→ move to the tool row */
+  firstTileEl()?.focus()
 })
 
 /* ───────────────────────── data loop ───────────────────────── */
@@ -958,8 +1197,8 @@ async function refresh() {
       render()
     }
     if (first) {
-      const first = app.querySelector<HTMLElement>('.nav .tile')
-      first?.focus()
+      /* boot focus: the tool row's first tile */
+      app.querySelector<HTMLElement>('.nav-strip .tile')?.focus()
       toolsCheck().then(t => { vpnOpenvpnInstalled = t?.openvpn?.installed ?? null })
         .catch(() => { vpnOpenvpnInstalled = null })
     }
@@ -982,3 +1221,7 @@ tickClock()
 /* idle screensaver — timeout comes from settings */
 overlay.initOverlay(60)
 getSettings().then(st => overlay.setIdleTimeout(st.idle_timeout)).catch(() => {})
+
+/* window resizes change how much of the strip overflows — refresh the
+   edge arrows */
+window.addEventListener('resize', updateNavArrows)

@@ -35,6 +35,18 @@ export function fetchNet(): Promise<NetInfo> {
   return getJSON<NetInfo>('/api/net')
 }
 
+export interface Health {
+  ok: boolean
+  name: string
+  port: number
+  build: { commit?: string; date?: string }
+  os: { system: string; release: string; machine: string }
+}
+
+export function fetchHealth(): Promise<Health> {
+  return getJSON<Health>('/api/health')
+}
+
 export type ExitAction = 'desktop' | 'hide' | 'exit'
 
 export interface Preset {
