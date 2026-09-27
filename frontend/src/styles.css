@@ -336,6 +336,20 @@ html, body {
 }
 .check-input:checked::after { content: '✓'; color: var(--cyan); font-size: 1.1em; text-shadow: 0 0 8px rgba(0, 245, 255, 0.8); }
 .check-input:focus-visible { border-color: var(--cyan); }
+/* modal checkbox row (e.g. "add OpenVPN to sudoers") */
+.check-row {
+  display: flex; align-items: center; gap: 0.9em;
+  padding: 0.7em 1em;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--panel-line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.check-label {
+  color: var(--text);
+  font-size: 1.05em; font-weight: 600; letter-spacing: 0.04em;
+  line-height: 1.4;
+}
 .saved-flash {
   align-self: flex-start;
   color: var(--green);
@@ -469,6 +483,11 @@ html, body {
 }
 .vpn-log::-webkit-scrollbar { width: 6px; }
 .vpn-log::-webkit-scrollbar-thumb { background: rgba(61, 255, 158, 0.3); border-radius: 3px; }
+/* the log is a keyboard stop (tabindex=0) — make the focus obvious */
+.vpn-log:focus-visible {
+  outline: 3px dashed rgba(61, 255, 158, 0.9);
+  outline-offset: 3px;
+}
 
 .empty {
   color: var(--dim);

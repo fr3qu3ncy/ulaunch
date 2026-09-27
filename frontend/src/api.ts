@@ -125,6 +125,10 @@ export function sudoVerify(password: string): Promise<any> {
   return postJSON('/api/sudo/verify', { password })
 }
 
+export function sudoOpenvpnNopasswd(): Promise<any> {
+  return postJSON('/api/sudo/openvpn-nopasswd', {})
+}
+
 export async function exitApp(action: ExitAction): Promise<void> {
   await fetch('/api/exit', {
     method: 'POST',

@@ -18,6 +18,7 @@ BASE = Path.home() / ".ulaunch"
 VPN_DIR = BASE / "vpn"
 LOG_DIR = BASE / "vpn-logs"
 RUN_DIR = BASE / "run"
+SUDOERS_DROPIN = Path("/etc/sudoers.d/ulaunch-openvpn")
 
 # live Popen per preset, for stdin-pipe release on kill/exit
 _procs: dict[str, subprocess.Popen] = {}
@@ -428,3 +429,28 @@ def install() -> dict:
     if p.returncode != 0:
         raise ValueError(p.stderr[-400:] or "apt install failed")
     return tool()
+
+
+def nopasswd_granted() -> bool:
+    """True when the current user can run openvpn via sudo without a
+    password (the ulaunch drop-in exists for this user)."""
+    try:
+        import pwd
+        user = pwd.getpwuid(os.getuid()).pw_name
+        text = SUDOERS_DROPIN.read_text()
+    except (OSError, KeyError):
+        return False
+    return f"{user} ALL=(ALL) NOPASSWD:" in text \
+        and "/openvpn" in text
+
+
+def grant_nopasswd() -> bool:
+    """One-time: allow the CURRENT user to run `sudo openvpn …` without a
+    password, so VPN connects don't need a fresh password every time.
+
+    Writes a single, tightly-scoped rule to a dedicated drop-in file
+    (only the openvpn binary, nothing else) and validates it with
+    visudo. Requires a cached sudo password — the password the UI just
+    verified is used for this privileged write. Idempotent. Raises
+    SudoRequired when no password is cached yet."""
+    return sudo.grant_openvpn_nopasswd()

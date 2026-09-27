@@ -85,41 +85,43 @@ export function renderModal(
   cancel.addEventListener('click', () => done(null))
   ok.addEventListener('click', save)
 
-  /* one keyboard chain: username → password → SAVE → CANCEL. */
-  const chain = [user, pw, ok, cancel]
-  const move = (i: number, d: number) => {
-    const j = (i + d + chain.length) % chain.length
-    chain[j].focus()
+  /* One keyboard chain over the WHOLE modal:
+       username → password → SAVE → CANCEL → username → …
+     Tab AND Shift+Tab wrap the full cycle (so CANCEL wraps back to the
+     password field); arrows follow the same cycle. */
+  const chain: HTMLElement[] = [user, pw, ok, cancel]
+  const focusAt = (i: number) =>
+    chain[(i + chain.length) % chain.length].focus()
+  const idxOf = (t: EventTarget | null) =>
+    chain.indexOf(t as HTMLElement)
+
+  const onCyclic = (t: HTMLElement) => (e: KeyboardEvent) => {
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      focusAt(idxOf(t) + (e.shiftKey ? -1 : 1))
+    } else if (e.key === 'ArrowRight' || e.key === 'ArrowDown' ||
+               e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      focusAt(idxOf(t) +
+        (e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : -1))
+    } else if (e.key === 'Enter') {
+      if (t === ok) { e.preventDefault(); save() }
+      else if (t === cancel) { e.preventDefault(); done(null) }
+    } else if (e.key === 'Escape') {
+      done(null)
+    }
+    e.stopPropagation()
   }
-  user.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); pw.focus() }
-    else if (e.key === 'Escape') done(null)
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); move(0, 1) }
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); move(0, -1) }
-    e.stopPropagation()
+  user.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Enter') { e.preventDefault(); focusAt(1); e.stopPropagation(); return }
+    onCyclic(user)(e)
   })
-  pw.addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); save() }
-    else if (e.key === 'Escape') done(null)
-    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); move(1, 1) }
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); move(1, -1) }
-    e.stopPropagation()
+  pw.addEventListener('keydown', (e: KeyboardEvent) => {
+    if (e.key === 'Enter') { e.preventDefault(); save(); e.stopPropagation(); return }
+    onCyclic(pw)(e)
   })
-  ;[ok, cancel].forEach((b, i, arr) => {
-    b.addEventListener('keydown', e => {
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-        e.preventDefault(); arr[(i + 1) % arr.length].focus()
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-        e.preventDefault(); arr[(i + arr.length - 1) % arr.length].focus()
-      } else if (e.key === 'Tab') {
-        e.preventDefault(); arr[(i + (e.shiftKey ? arr.length - 1 : 1)) % arr.length].focus()
-      } else if (e.key === 'Enter') {
-        e.preventDefault(); (b === ok ? save : () => done(null))()
-      } else if (e.key === 'Escape') {
-        done(null)
-      }
-    })
-  })
+  ok.addEventListener('keydown', onCyclic(ok))
+  cancel.addEventListener('keydown', onCyclic(cancel))
   row.appendChild(ok); row.appendChild(cancel)
   box.appendChild(row)
   m.appendChild(box)

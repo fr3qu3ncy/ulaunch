@@ -93,6 +93,20 @@ def sudo_verify(payload: dict) -> dict:
     return {"ok": True}
 
 
+@app.post("/api/sudo/openvpn-nopasswd")
+def sudo_openvpn_nopasswd() -> dict:
+    """One-time grant: after this, `sudo openvpn …` needs no password for
+    the current user (dedicated, openvpn-only drop-in, visudo-checked).
+    The already-verified cached password is used for the write."""
+    try:
+        ok = vpn.grant_nopasswd()
+    except SudoRequired:
+        raise HTTPException(401, "sudo password required")
+    if not ok:
+        raise HTTPException(500, "could not add the sudoers rule")
+    return {"ok": True, "openvpn_nopasswd": True}
+
+
 # ── tools ───────────────────────────────────────────────────────
 
 @app.get("/api/tools")

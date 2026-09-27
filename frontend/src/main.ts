@@ -9,7 +9,7 @@ import {
 } from './api'
 import { mountScan, type ScanHandle } from './scan'
 import * as overlay from './overlay'
-import { askSudo } from './sudo'
+import { askSudo, type SudoOpts } from './sudo'
 import { askVpnCreds } from './vpnCreds'
 
 type Screen = 'home' | 'vpn' | 'scan' | 'system' | 'settings'
@@ -45,12 +45,16 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return n
 }
 
-async function api<T = any>(p: () => Promise<T>, retryOnSudo: boolean = true): Promise<T> {
+async function api<T = any>(
+  p: () => Promise<T>,
+  opts: { sudo?: SudoOpts; retryOnSudo?: boolean } = {},
+): Promise<T> {
+  const { sudo: sudoOpts, retryOnSudo = true } = opts
   try {
     return await p()
   } catch (e: any) {
     if (retryOnSudo && e?.status === 401) {
-      if (await askSudo()) return p()
+      if (await askSudo(sudoOpts)) return p()
       throw new Error('cancelled (sudo required)')
     }
     throw e
@@ -231,7 +235,13 @@ async function connectPreset(p: Preset, act: HTMLButtonElement) {
         return
       }
     }
-    await api(() => vpnConnect(p.name))
+    await api(() => vpnConnect(p.name), {
+      sudo: {
+        grantCheckbox: true,
+        sub: 'Enter your sudo password to start OpenVPN. Optionally allow '
+          + 'password-less OpenVPN for this device afterwards.',
+      },
+    })
     await refreshVpn()
   } catch (e: any) {
     act.textContent = 'CONNECT'
@@ -305,6 +315,10 @@ function vpnAddForm(): HTMLElement {
 
 function vpnLogPanel(name: string | null): HTMLElement {
   const p = el('div', 'vpn-log')
+  /* tabbable: the log is part of the keyboard cycle so you can Tab to it
+     and read the connection output without leaving the row of buttons */
+  p.tabIndex = 0
+  p.dataset.fk = 'vpn:log'
   if (!name) { p.textContent = '— no log (not connected) —'; return p }
   p.textContent = 'loading…'
   const load = () => vpnLog(name, 60)
@@ -328,7 +342,14 @@ function vpnContent(): HTMLElement {
     inst.dataset.fk = 'openvpn:install'
     inst.addEventListener('click', () => {
       inst.disabled = true; inst.textContent = 'installing…'
-      api(() => toolsInstall('openvpn'))
+      /* tool install — the sudo modal here must NOT offer the OpenVPN
+         sudoers checkbox (that is for OpenVPN connects, not installs) */
+      api(() => toolsInstall('openvpn'), {
+        sudo: {
+          grantCheckbox: false,
+          sub: 'Enter your sudo password to install OpenVPN.',
+        },
+      })
         .then(() => { vpnOpenvpnInstalled = true; refreshVpn() })
         .catch(e => { inst.disabled = false; inst.textContent = 'INSTALL'; alert(String(e.message || e)) })
     })
@@ -345,9 +366,12 @@ function vpnContent(): HTMLElement {
     c.appendChild(list)
   }
 
-  c.appendChild(vpnAddForm())
+  /* the live log sits between the presets and the add form: it is the
+     thing you watch while connecting, so it has to be visible without
+     scrolling past the whole add form */
   c.appendChild(el('div', 'section-title', 'LIVE LOG'))
   c.appendChild(vpnLogPanel(vpnActive?.preset ?? null))
+  c.appendChild(vpnAddForm())
   return c
 }
 
@@ -571,7 +595,7 @@ function activeTile(): HTMLElement | null {
   return app.querySelector<HTMLElement>('.nav .tile.active')
 }
 function focusContentFirst(): void {
-  const first = app.querySelector<HTMLElement>('.content button:not([disabled]), .content input, .content select, .content textarea, .content [tabindex="0"]')
+  const first = app.querySelector<HTMLElement>('.content button:not([disabled]), .content input:not([disabled]), .content select:not([disabled]), .content textarea:not([disabled]), .content [tabindex="0"]:not([disabled])')
   first?.focus()
 }
 
@@ -628,8 +652,12 @@ function toggleEsc(force?: boolean) {
 
 /* ───────────────────────── keyboard ───────────────────────── */
 function focusables(root: HTMLElement): HTMLElement[] {
+  /* :not([disabled]) on EVERY branch — a disabled button that was given
+     an explicit tabIndex=0 (e.g. START SCAN while nmap is missing) would
+     otherwise join the cycle via [tabindex="0"] and trap focus: .focus()
+     on a disabled element is a silent no-op. */
   return Array.from(root.querySelectorAll<HTMLElement>(
-    'button:not([disabled]), input, select, textarea, a, [tabindex="0"]',
+    'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a, [tabindex="0"]:not([disabled])',
   ))
 }
 /* Text-entry fields that own the arrow keys and Backspace natively

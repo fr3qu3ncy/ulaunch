@@ -145,17 +145,6 @@ export function mountScan(container: HTMLElement): ScanHandle {
     root.innerHTML = ''
     const c = el('div', 'scan-content')
 
-    if (nmapInstalled === false) {
-      const tb = el('div', 'tool-banner')
-      tb.innerHTML = '<span>⚠ nmap not installed — scanning unavailable</span>'
-      const inst = el('button', 'btn active', 'INSTALL NMAP')
-      inst.tabIndex = 0
-      inst.dataset.fk = 'install'
-      inst.addEventListener('click', () => installNmap(inst))
-      tb.appendChild(inst)
-      c.appendChild(tb)
-    }
-
     c.appendChild(el('div', 'section-title', 'SELECT NETWORK'))
 
     const list = el('div', 'scan-opt-list')
@@ -195,6 +184,21 @@ export function mountScan(container: HTMLElement): ScanHandle {
       optsRow.appendChild(t)
     }
     c.appendChild(optsRow)
+
+    /* last in the DOM on purpose: with nmap missing the START button is
+       disabled (excluded from the focus cycle), so the install banner is
+       the final keyboard stop — arrows/Tab from the last toggle land on
+       INSTALL NMAP instead of wrapping back to the options. */
+    if (nmapInstalled === false) {
+      const tb = el('div', 'tool-banner')
+      tb.innerHTML = '<span>⚠ nmap not installed — scanning unavailable</span>'
+      const inst = el('button', 'btn active', 'INSTALL NMAP')
+      inst.tabIndex = 0
+      inst.dataset.fk = 'install'
+      inst.addEventListener('click', () => installNmap(inst))
+      tb.appendChild(inst)
+      c.appendChild(tb)
+    }
 
     if (options.length === 0) {
       c.appendChild(el('div', 'empty', 'no scannable interfaces found'))
