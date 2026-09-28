@@ -721,10 +721,17 @@ function render() {
      body and Tab restarts at the logo. */
   const ae = document.activeElement as HTMLElement | null
   const fk = ae && app.contains(ae) ? ae.dataset.fk : undefined
+  /* the strip is rebuilt on every render — remember its scroll position so
+     re-renders (Enter dropping into a tool, the 15s net refresh) don't
+     snap the icon bar back to the left under the user's cursor (M16:
+     "the icon bar reloads all the way to the left, then scrolls right") */
+  const prevScroll = app.querySelector<HTMLElement>('.nav-strip')?.scrollLeft ?? 0
 
   app.innerHTML = ''
   app.appendChild(header(lastNet))
   app.appendChild(nav())
+  const strip = app.querySelector<HTMLElement>('.nav-strip')
+  if (strip) strip.scrollLeft = prevScroll
   if (screen === 'network') app.appendChild(homeContent(lastNet))
   else if (screen === 'about') app.appendChild(aboutContent())
   else if (screen === 'vpn') app.appendChild(vpnContent())
@@ -742,10 +749,20 @@ function render() {
   if (fk) {
     const restored = app.querySelector<HTMLElement>(`[data-fk="${fk}"]`)
     if (restored && !(restored as HTMLButtonElement).disabled) {
-      restored.focus()
+      /* tiles: focus WITHOUT the browser's own scroll-into-view — with the
+         strip's scroll-behavior:smooth, a plain focus() on a rebuilt,
+         off-screen tile animates the strip left→right (the M16 "reload to
+         the left then scroll right" on Enter). We position the strip
+         ourselves below, instantly. Content elements keep the default
+         focus scroll (that's what keeps them in view across re-renders). */
+      if (restored.classList.contains('tile')) restored.focus({ preventScroll: true })
+      else restored.focus()
       /* the strip is rebuilt on every render (scroll resets to 0) — if the
          restored tile landed off-screen, scroll the strip so the focus
-         outline is visible again */
+         outline is visible again. MUST be 'instant': 'auto' defers to the
+         strip's CSS scroll-behavior:smooth, which animated the whole strip
+         left→right on every Enter. Instant lands before the next paint —
+         no flicker. */
       if (restored.classList.contains('tile')) {
         const strip = app.querySelector<HTMLElement>('.nav-strip')
         const nr = strip?.getBoundingClientRect()
@@ -753,7 +770,7 @@ function render() {
         if (strip && nr && (tr.left < nr.left - 1 || tr.right > nr.right + 1)) {
           strip.scrollBy({
             left: (tr.left + tr.right) / 2 - (nr.left + nr.right) / 2,
-            behavior: 'auto',
+            behavior: 'instant',
           })
         }
       }

@@ -89,8 +89,11 @@ html, body {
   scroll-behavior: smooth;
   /* vertical padding so the tile's dashed focus outline (3px + 3px offset)
      and the active tile's glow fit INSIDE the strip's clip box — without
-     it the outline's top/bottom edges are chopped off by overflow:hidden */
-  padding: 9px 2px;
+     it the outline's top/bottom edges are chopped off by overflow:hidden.
+     HORIZONTAL padding ≥ 7px too: at max scroll the end tile sits flush
+     with the padding edge — with only 2px the tile's own focus/selection
+     outline (6px beyond the tile edge) was clipped by the strip. */
+  padding: 9px 7px;
 }
 .nav-strip::-webkit-scrollbar { display: none; }
 /* the edge arrows: as tall as the tiles, as thin as possible, a narrow
@@ -116,24 +119,28 @@ html, body {
      non-zero and the "triangle" becomes a trapezoid */
   box-sizing: border-box;
 }
-/* left arrow → points LEFT (reveals the icons off-screen to the left) */
+/* left arrow → points LEFT (reveals the icons off-screen to the left).
+   The point is OPPOSITE the solid border (verified by pixel analysis,
+   M16): a solid border-LEFT renders the tip on the RIGHT — so a
+   left-pointing triangle needs a solid border-RIGHT. */
 .nav-arrow-left .tri {
-  border-top: 1.5em solid transparent;
-  border-bottom: 1.5em solid transparent;
-  border-left: 0.55em solid var(--cyan);
-  filter: drop-shadow(0 0 6px rgba(0, 245, 255, 0.7));
-}
-/* right arrow → points RIGHT (reveals the icons off-screen to the right) */
-.nav-arrow-right .tri {
   border-top: 1.5em solid transparent;
   border-bottom: 1.5em solid transparent;
   border-right: 0.55em solid var(--cyan);
   filter: drop-shadow(0 0 6px rgba(0, 245, 255, 0.7));
 }
+/* right arrow → points RIGHT (reveals the icons off-screen to the right):
+   solid border-LEFT puts the tip on the right */
+.nav-arrow-right .tri {
+  border-top: 1.5em solid transparent;
+  border-bottom: 1.5em solid transparent;
+  border-left: 0.55em solid var(--cyan);
+  filter: drop-shadow(0 0 6px rgba(0, 245, 255, 0.7));
+}
 .nav-arrow:hover, .nav-arrow:focus-visible { color: var(--magenta); }
 .nav-arrow:hover .tri, .nav-arrow:focus-visible .tri { border-color: transparent; }
-.nav-arrow-left:hover .tri, .nav-arrow-left:focus-visible .tri { border-left-color: var(--magenta); }
-.nav-arrow-right:hover .tri, .nav-arrow-right:focus-visible .tri { border-right-color: var(--magenta); }
+.nav-arrow-left:hover .tri, .nav-arrow-left:focus-visible .tri { border-right-color: var(--magenta); }
+.nav-arrow-right:hover .tri, .nav-arrow-right:focus-visible .tri { border-left-color: var(--magenta); }
 .tile {
   flex: 1 1 auto;
   min-width: 12em;   /* wide enough that 5+ tools overflow the viewport */
