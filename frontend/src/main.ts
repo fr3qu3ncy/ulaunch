@@ -729,6 +729,12 @@ function render() {
 
   app.innerHTML = ''
   app.appendChild(header(lastNet))
+  /* the header (incl. #clock) was just rebuilt — fill the clock in this
+     same frame, so the time is never blank between renders and the
+     5s tick. Without this, every Enter/tool-select and the 15s net
+     refresh showed the status bar time vanishing for up to 5s until the
+     next tickClock fired. */
+  tickClock()
   app.appendChild(nav())
   const strip = app.querySelector<HTMLElement>('.nav-strip')
   if (strip) {
@@ -1223,9 +1229,13 @@ async function refresh() {
     const net = await fetchNet()
     const first = !lastNet
     lastNet = net
-    if (screen === 'vpn' || screen === 'scan') {
-      /* update only the items that need it — the live header stats. The
-         tool's own content is handled by its poller/WebSocket. */
+    if (screen === 'vpn' || screen === 'scan' || screen === 'system' || screen === 'settings') {
+      /* update only the items that need it — the live header stats. VPN
+         and SCAN update their own content (log poller / WebSocket), and
+         SYSTEM and SETTINGS are static once loaded (power buttons never
+         change; settings save immediately on change) — a full render()
+         here would needlessly rebuild the power section / reset the
+         settings controls under the user. */
       refreshHeaderStats(net)
     } else {
       render()
