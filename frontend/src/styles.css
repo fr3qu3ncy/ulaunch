@@ -742,6 +742,10 @@ html, body {
   color: var(--magenta); font-weight: 600;
   text-shadow: 0 0 8px rgba(255, 46, 196, 0.5);
 }
+/* M23: in the detail view the hostname sits directly in the heading (a
+   direct child of .scan-head), so without this it inherited the base
+   font size while the IP is .scan-target's 1.7em — match the IP */
+.scan-head .scan-hostname { font-size: 1.7em; }
 .scan-host-card {
   background: var(--panel);
   border: 1px solid var(--panel-line);

@@ -459,11 +459,16 @@ export function mountScan(container: HTMLElement): ScanHandle {
     row.appendChild(again)
     c.appendChild(row)
     root.appendChild(c)
-    /* fresh results (no control in this view had focus before): drop it
-       onto the first host card so ↑/↓ immediately scroll the results */
+    /* fresh results (no control in this view had focus before — e.g. right
+       after a scan, or re-entering the tool after a tool switch): drop focus
+       onto the first host card so ↑/↓ immediately scrolls the results. M23:
+       pin the pane to the top and focus without scroll-into-view, so the
+       subnet heading + the top NEW SCAN row stay visible (the default
+       scroll-into-view clipped them off the top of a long host list) */
+    container.scrollTop = 0
     const ae = document.activeElement as HTMLElement | null
     if (!ae || !root.contains(ae)) {
-      root.querySelector<HTMLElement>('.scan-host-card, .scan-host')?.focus()
+      root.querySelector<HTMLElement>('.scan-host-card, .scan-host')?.focus({ preventScroll: true })
     }
   }
 
@@ -584,11 +589,15 @@ export function mountScan(container: HTMLElement): ScanHandle {
     row.appendChild(back)
     c.appendChild(row)
     root.appendChild(c)
-    /* land on the first port block (not BACK) so ↑/↓ immediately walks the
-       ports */
+    /* M23: land on the first port block (not BACK) so ↑/↓ immediately walks
+       the ports — but WITHOUT the browser's default scroll-into-view, which
+       clipped the IP + hostname heading off the top of a host with many
+       ports. Pin the pane to the top so the heading stays visible;
+       listArrow (↑/↓) scrolls from there. */
+    container.scrollTop = 0
     const first = root.querySelector<HTMLElement>('.host-port')
-    if (first) first.focus()
-    else back.focus()
+    if (first) first.focus({ preventScroll: true })
+    else back.focus({ preventScroll: true })
   }
 
   function esc(s: string): string {

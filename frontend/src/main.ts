@@ -812,6 +812,18 @@ function activeTile(): HTMLElement | null {
   return app.querySelector<HTMLElement>('.nav .tile.active')
 }
 function focusContentFirst(): void {
+  const c = app.querySelector<HTMLElement>('.content')
+  /* Scan RESULTS re-entry (Enter on the scan tile while already on the
+     screen — no remount): the top NEW SCAN button precedes the host list in
+     the DOM (M22), so the generic "first control" would land on it. The
+     keyboard starts on the first host card — focus that and pin the pane to
+     the top so the subnet heading stays visible (same clip-class bug as the
+     fresh-mount path). Pick form (.scan-opt) and live scan (.scan-log) are
+     left to the generic path. */
+  if (c && !c.querySelector('.scan-opt, .scan-log')) {
+    const card = c.querySelector<HTMLElement>('.scan-host-card, .scan-host')
+    if (card) { c.scrollTop = 0; card.focus({ preventScroll: true }); return }
+  }
   const first = app.querySelector<HTMLElement>('.content button:not([disabled]), .content input:not([disabled]), .content select:not([disabled]), .content textarea:not([disabled]), .content [tabindex="0"]:not([disabled])')
   first?.focus()
 }
