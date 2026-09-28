@@ -1055,6 +1055,10 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   if (e.key === 'Escape') {
     e.preventDefault()
     if (screen !== 'about' && (t === null || t === document.body || inContent)) {
+      /* scan per-IP detail view (M21): Esc goes BACK to the host list,
+         not out of the whole tool */
+      const back = document.querySelector<HTMLElement>('.scan-holder [data-fk="back"]')
+      if (back) { back.click(); return }
       activeTile()?.focus()
     } else {
       toggleEsc(true)
@@ -1099,6 +1103,9 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
         (t === null || t === document.body || inContent) &&
         !isTextInput(t)) {
       e.preventDefault()
+      /* scan per-IP detail view (M21): Backspace goes BACK to the host list */
+      const back = document.querySelector<HTMLElement>('.scan-holder [data-fk="back"]')
+      if (back) { back.click(); return }
       activeTile()?.focus()
       return
     }
@@ -1109,6 +1116,13 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
     if (stop === 'logo' || stop === 'tile') {
       e.preventDefault()
       enterTool(t as HTMLElement)
+      return
+    }
+    /* host card / row in the scan results: drill into the per-IP detail
+       view (M21) instead of the native button activation */
+    if (t && (t.classList.contains('scan-host-card') || t.classList.contains('scan-host'))) {
+      e.preventDefault()
+      t.click()
       return
     }
     if (stop === 'arrow') {

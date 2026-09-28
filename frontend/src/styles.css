@@ -770,7 +770,71 @@ html, body {
 .port-row .p-port { font-family: var(--font-display); font-weight: 700; color: var(--cyan); }
 .port-row.filtered .p-port { color: var(--dim); }
 .port-row .p-svc { font-weight: 600; }
-.port-row .p-detail { color: var(--soft); font-size: 1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* DETAIL is script output — primary content, not decoration: readable
+   text colour (M20: was the near-invisible --dim) */
+.port-row .p-detail { color: var(--text); font-size: 1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* per-IP drill-down hint on the host cards (M21) */
+.scan-host-enter {
+  margin-left: 1em;
+  font-family: var(--font-display);
+  font-size: 0.62em; font-weight: 700; letter-spacing: 0.2em;
+  color: var(--dim); text-transform: uppercase;
+}
+.scan-host-card:focus-visible .scan-host-enter,
+.scan-host:focus-visible .scan-host-enter { color: var(--cyan); text-shadow: 0 0 8px rgba(0, 245, 255, 0.7); }
+.scan-host-card-meta {
+  margin-top: 0.25em;
+  font-family: var(--font-display);
+  font-size: 0.62em; font-weight: 600; letter-spacing: 0.18em;
+  color: var(--dim); text-transform: uppercase;
+}
+.scan-host-card:focus-visible .scan-host-card-meta { color: var(--soft); }
+
+/* per-IP detail view (M21) */
+.host-port {
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  padding: 0.7em 1em;
+  display: flex; flex-direction: column; gap: 0.45em;
+}
+.host-port.filtered { opacity: 0.55; }
+.host-port-head { display: flex; align-items: baseline; gap: 0.9em; flex-wrap: wrap; }
+.host-port-head .hport-num {
+  font-family: var(--font-display);
+  font-size: 1.3em; font-weight: 700; color: var(--cyan);
+}
+.host-port.filtered .hport-num { color: var(--dim); }
+.hport-state {
+  font-family: var(--font-display);
+  font-size: 0.85em; font-weight: 700; letter-spacing: 0.18em;
+}
+.hport-state.open { color: var(--green); text-shadow: 0 0 8px rgba(61, 255, 158, 0.5); }
+.hport-state.closed, .hport-state.filtered { color: var(--dim); }
+.hport-svc { font-size: 1.1em; font-weight: 600; color: var(--text); }
+.hport-reason { font-size: 0.95em; color: var(--soft); }
+.hport-extra { font-size: 1.05em; color: var(--soft); }
+.host-script {
+  border-left: 2px solid var(--panel-line);
+  padding-left: 0.9em;
+  display: flex; flex-direction: column; gap: 0.2em;
+}
+.host-script-id {
+  font-family: var(--font-display);
+  font-size: 0.8em; font-weight: 700; letter-spacing: 0.16em;
+  color: var(--magenta); text-transform: uppercase;
+}
+.host-script-out {
+  margin: 0;
+  font-family: monospace;
+  font-size: 1em; line-height: 1.4;
+  color: var(--soft);
+  white-space: pre-wrap; word-break: break-word;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 6px;
+  padding: 0.6em 0.8em;
+}
 
 /* ── idle overlay (M4) ── */
 .overlay {

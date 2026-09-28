@@ -92,9 +92,10 @@ export function mountScan(container: HTMLElement): ScanHandle {
   let lastState: ScanState | null = null
   let liveLog: string[] = []
 
-  /* phases: pick -> scan | results */
-  let phase: 'pick' | 'scan' | 'results' = 'pick'
+  /* phases: pick -> scan | results | detail (per-IP drill-down) */
+  let phase: 'pick' | 'scan' | 'results' | 'detail' = 'pick'
   let restored = false /* results came from the job store, not this mount */
+  let selIp: string | null = null /* detail view: which IP is drilled into */
   let options: SubnetOption[] = []
   let selIndex = 0
   let flags: ScanFlags = { ...DEFAULT_FLAGS }
@@ -406,8 +407,11 @@ export function mountScan(container: HTMLElement): ScanHandle {
         const d = el('div', 'scan-host')
         d.tabIndex = 0
         d.dataset.fk = `host:${h.ip}`
+        d.title = 'ENTER — full details for this host'
         d.innerHTML = `<b>${h.ip}</b>` +
-          (h.names.length ? ` <span class="hsep">|</span> <span class="scan-hostname">${h.names.join(', ')}</span>` : '')
+          (h.names.length ? ` <span class="hsep">|</span> <span class="scan-hostname">${h.names.join(', ')}</span>` : '') +
+          `<span class="scan-host-enter">ENTER ▸</span>`
+        d.addEventListener('click', () => openDetail(h.ip))
         g.appendChild(d)
       }
       c.appendChild(g)
@@ -454,10 +458,12 @@ export function mountScan(container: HTMLElement): ScanHandle {
       const card = el('div', 'scan-host-card')
       card.tabIndex = 0
       card.dataset.fk = `host:${ip}`
+      card.title = 'ENTER — full details for this host'
       const names = lastState?.hosts.find(h => h.ip === ip)?.names ?? []
+      const openN = portList.filter(p => p.state === 'open').length
       card.innerHTML = `<div class="scan-host-card-ip"><b>${ip}</b>` +
         (names.length ? `<span class="hsep">|</span><span class="scan-hostname">${names.join(', ')}</span>` : '') +
-        `</div>`
+        `</div><div class="scan-host-card-meta">${openN} OPEN PORT · ${portList.length} SCANNED · ENTER ▸ DETAILS</div>`
       const tbl = el('div', 'port-table')
       const rows = el('div', 'port-row port-row-head')
       rows.innerHTML = '<span>PORT</span><span>SVC</span><span>DETAIL</span>'
@@ -473,9 +479,91 @@ export function mountScan(container: HTMLElement): ScanHandle {
         tbl.appendChild(r)
       }
       card.appendChild(tbl)
+      card.addEventListener('click', () => openDetail(ip))
       g.appendChild(card)
     }
     c.appendChild(g)
+  }
+
+  /* ── per-IP detail view (M21) ─────────────────────────────
+     Enter (or click) on a host card opens this: every open port with
+     service/product/version and the FULL script output, untruncated.
+     Today it is read-only — the port blocks are the future hook for
+     per-service actions (e.g. curl an http port). */
+  function openDetail(ip: string) {
+    selIp = ip
+    phase = 'detail'
+    render()
+  }
+  function closeDetail() {
+    const ip = selIp
+    phase = 'results'
+    selIp = null
+    render()
+    /* put focus back on the card the user drilled into, so ↑/↓ continues
+       where it left off */
+    const card = ip ? root.querySelector<HTMLElement>(`[data-fk="host:${ip}"]`) : null
+    if (card) { card.focus(); return }
+    root.querySelector<HTMLElement>('.scan-host-card, .scan-host')?.focus()
+  }
+
+  function renderDetail() {
+    root.innerHTML = ''
+    const st = lastState
+    const c = el('div', 'scan-content')
+    if (!st || !selIp) { c.appendChild(el('div', 'empty', 'no host')); root.appendChild(c); return }
+
+    const host = st.hosts.find(h => h.ip === selIp)
+    const names = host?.names ?? []
+    const head = el('div', 'scan-head')
+    head.innerHTML = `<span class="scan-target">${selIp}</span>` +
+      (names.length ? `<span class="scan-hostname">${names.join(', ')}</span>` : '')
+    head.appendChild(el('span', `scan-status ${st.status}`, st.status.toUpperCase()))
+    c.appendChild(head)
+
+    /* detail (deep) wins; fall back to the plain port map */
+    const ports = (st.detail?.[selIp]?.length ? st.detail[selIp]
+        : st.ports?.[selIp]?.length ? st.ports[selIp]
+        : st.detail?.[selIp] ?? []) as PortInfo[]
+    const openN = ports.filter(p => p.state === 'open').length
+    c.appendChild(el('div', 'section-title',
+      `${ports.length} PORT(S) SCANNED · ${openN} OPEN`))
+
+    if (!ports.length) {
+      c.appendChild(el('div', 'empty', 'no port data for this host'))
+    }
+    for (const p of ports) {
+      const block = el('div', `host-port ${p.state === 'open' ? 'open' : 'filtered'}`)
+      const bhead = el('div', 'host-port-head')
+      const svc = [p.service, p.product, p.version].filter(Boolean).join(' ')
+      bhead.innerHTML = `<b class="hport-num">${p.port}/${p.protocol}</b>` +
+        `<span class="hport-state ${p.state}">${p.state.toUpperCase()}</span>` +
+        (svc ? `<span class="hport-svc">${esc(svc)}</span>` : '') +
+        (p.state_reason ? `<span class="hport-reason">${esc(p.state_reason)}</span>` : '')
+      block.appendChild(bhead)
+      if (p.extrainfo) block.appendChild(el('div', 'hport-extra', p.extrainfo))
+      for (const s of p.scripts) {
+        const out = s.output.trim()
+        if (!out) continue
+        const sbox = el('div', 'host-script')
+        const shead = el('div', 'host-script-id', s.id)
+        sbox.appendChild(shead)
+        /* full output, untruncated — monospace, wraps */
+        sbox.appendChild(el('pre', 'host-script-out', out))
+        block.appendChild(sbox)
+      }
+      c.appendChild(block)
+    }
+
+    const row = el('div', 'btn-row')
+    const back = el('button', 'btn active', '◂ BACK TO HOSTS')
+    back.tabIndex = 0
+    back.dataset.fk = 'back'
+    back.addEventListener('click', closeDetail)
+    row.appendChild(back)
+    c.appendChild(row)
+    root.appendChild(c)
+    back.focus()
   }
 
   function esc(s: string): string {
@@ -487,6 +575,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
     if (destroyed) return
     if (phase === 'pick') renderPick()
     else if (phase === 'scan') renderScan()
+    else if (phase === 'detail') renderDetail()
     else renderResults()
   }
 
