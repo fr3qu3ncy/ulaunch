@@ -377,6 +377,17 @@ export function mountScan(container: HTMLElement): ScanHandle {
     root.appendChild(c)
   }
 
+  /* NEW SCAN: back to the pick screen (both the top and bottom buttons do
+     this — the top one is reachable without scrolling after a tool switch) */
+  function newScan() {
+    phase = 'pick'
+    lastState = null
+    liveLog = []
+    restored = false
+    ws?.close()
+    render()
+  }
+
   function renderResults() {
     root.innerHTML = ''
     const st = lastState
@@ -390,6 +401,17 @@ export function mountScan(container: HTMLElement): ScanHandle {
     head.appendChild(el('span', `scan-status ${st.status}`,
       `${st.status.toUpperCase()} · ${dur.toFixed(0)}s`))
     c.appendChild(head)
+
+    /* top action row (M22): NEW SCAN reachable without scrolling — after a
+       tool switch the results restore with focus on the first card, so the
+       bottom button can be a full list away */
+    const topRow = el('div', 'btn-row')
+    const topNew = el('button', 'btn active', '↻ NEW SCAN')
+    topNew.tabIndex = 0
+    topNew.dataset.fk = 'newscan-top'
+    topNew.addEventListener('click', newScan)
+    topRow.appendChild(topNew)
+    c.appendChild(topRow)
 
     if (st.error) c.appendChild(el('div', 'form-err', st.error))
 
@@ -433,14 +455,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
     const again = el('button', 'btn active', '↻ NEW SCAN')
     again.tabIndex = 0
     again.dataset.fk = 'newscan'
-    again.addEventListener('click', () => {
-      phase = 'pick'
-      lastState = null
-      liveLog = []
-      restored = false
-      ws?.close()
-      render()
-    })
+    again.addEventListener('click', newScan)
     row.appendChild(again)
     c.appendChild(row)
     root.appendChild(c)
@@ -500,8 +515,9 @@ export function mountScan(container: HTMLElement): ScanHandle {
     phase = 'results'
     selIp = null
     render()
-    /* put focus back on the card the user drilled into, so ↑/↓ continues
-       where it left off */
+    /* focus the card the user drilled into — the port blocks only exist in
+       the detail view, so in the results view the card is where the
+       keyboard continues from */
     const card = ip ? root.querySelector<HTMLElement>(`[data-fk="host:${ip}"]`) : null
     if (card) { card.focus(); return }
     root.querySelector<HTMLElement>('.scan-host-card, .scan-host')?.focus()
@@ -532,8 +548,13 @@ export function mountScan(container: HTMLElement): ScanHandle {
     if (!ports.length) {
       c.appendChild(el('div', 'empty', 'no port data for this host'))
     }
-    for (const p of ports) {
+    for (let pi = 0; pi < ports.length; pi++) {
+      const p = ports[pi]
       const block = el('div', `host-port ${p.state === 'open' ? 'open' : 'filtered'}`)
+      /* selectable with ↑/↓ (M22): each block is a focus stop the main
+         keydown handler walks, and a click target for the mouse */
+      block.tabIndex = 0
+      block.dataset.fk = `port:${pi}`
       const bhead = el('div', 'host-port-head')
       const svc = [p.service, p.product, p.version].filter(Boolean).join(' ')
       bhead.innerHTML = `<b class="hport-num">${p.port}/${p.protocol}</b>` +
@@ -563,7 +584,11 @@ export function mountScan(container: HTMLElement): ScanHandle {
     row.appendChild(back)
     c.appendChild(row)
     root.appendChild(c)
-    back.focus()
+    /* land on the first port block (not BACK) so ↑/↓ immediately walks the
+       ports */
+    const first = root.querySelector<HTMLElement>('.host-port')
+    if (first) first.focus()
+    else back.focus()
   }
 
   function esc(s: string): string {

@@ -952,24 +952,24 @@ function enterTool(t: HTMLElement): void {
 }
 
 /* ── results-list scrolling ──────────────────────────────── */
-/* One arrow press = a few lines (~4 port rows) of scrolling while the
-   focused host card overflows the results pane (deep scans produce tall
-   cards); once the card no longer overflows the pressed edge, focus jumps
-   to the neighbouring card. ↓ past the LAST card falls through to the
-   NEW SCAN button (handled by the caller). Returns true when the key was
-   handled (scrolled, jumped, or clamped), false for the caller to act on. */
-function resultsArrow(dir: 1 | -1, card: HTMLElement, content: HTMLElement | null): boolean {
+/* One arrow press = a few lines of scrolling while the focused list item
+   overflows the results pane (deep scans produce tall items); once the item
+   no longer overflows the pressed edge, focus jumps to the neighbouring item.
+   The caller owns the fall-through (↓ past the LAST item -> the button
+   below the list). Shared by the host-card list and the per-IP detail view's
+   port blocks (M22). Returns true when the key was handled (scrolled,
+   jumped, or clamped), false for the caller to act on. */
+function listArrow(dir: 1 | -1, card: HTMLElement, list: HTMLElement[],
+                   content: HTMLElement | null, line: () => number): boolean {
   if (!content) return false
-  const list = Array.from(content.querySelectorAll<HTMLElement>('.scan-host-card, .scan-host'))
   const i = list.indexOf(card)
+  if (i < 0) return false
   const cr = card.getBoundingClientRect()
   const vr = content.getBoundingClientRect()
   const padB = parseFloat(getComputedStyle(content).paddingBottom) || 0
   const viewH = vr.height - padB
   const top = cr.top - vr.top
   const bottom = top + cr.height
-  /* ~4 port rows per press — "a few lines" */
-  const line = () => Math.max(20, Math.round(((content.querySelector('.port-row') as HTMLElement | null)?.offsetHeight || 40) * 4))
 
   if (dir === 1) {
     /* DOWN: scroll the missing bottom edge in, a few lines per press */
@@ -1152,19 +1152,39 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   /* text-entry fields own the arrows natively (caret movement) */
   if (isTextInput(t)) return
 
-  /* scan results list: ↑/↓ scroll a few LINES per press while the focused
-     host card overflows the results pane (deep scans produce tall cards),
-     and jump to the previous/next card once the card is fully visible.
-     Past the BOTTOM ↓, focus falls through to the NEW SCAN button below
-     the list. ←/→ (and Tab) keep cycling ALL controls of the tool. */
   const dir: 1 | -1 = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1 : -1
 
+  /* scan results: host cards — ↑/↓ scroll a few LINES per press while the
+     focused card overflows the results pane (deep scans produce tall cards),
+     and jump to the previous/next card once it is fully visible. Past the
+     BOTTOM ↓, focus falls through to the NEW SCAN button below the list.
+     ←/→ (and Tab) keep cycling ALL controls of the tool. */
   if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
       t && (t.classList.contains('scan-host-card') || t.classList.contains('scan-host'))) {
     e.preventDefault()
-    if (resultsArrow(dir, t, content)) return
+    const hostList = Array.from(content?.querySelectorAll<HTMLElement>('.scan-host-card, .scan-host') ?? [])
+    /* ~4 port rows per press — "a few lines" */
+    const line = () => Math.max(20, Math.round(
+      ((content?.querySelector('.port-row') as HTMLElement | null)?.offsetHeight || 40) * 4))
+    if (listArrow(dir, t, hostList, content, line)) return
     /* not scrollable/navigable: past the last card ↓ → NEW SCAN */
     if (dir === 1) content?.querySelector<HTMLElement>('[data-fk="newscan"]')?.focus()
+    return
+  }
+
+  /* per-IP detail view (M22): ↑/↓ walk the port blocks the same way —
+     a few lines per press while a tall block (long script output)
+     overflows the pane, jump between blocks once visible. Past the LAST
+     block ↓ → the BACK TO HOSTS button. */
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+      t && t.classList.contains('host-port')) {
+    e.preventDefault()
+    const portList = Array.from(content?.querySelectorAll<HTMLElement>('.host-port') ?? [])
+    /* ~8 lines of the script output per press */
+    const line = () => Math.max(24, Math.round(
+      ((content?.querySelector('.host-script-out') as HTMLElement | null)?.offsetHeight || 20) * 8))
+    if (listArrow(dir, t, portList, content, line)) return
+    if (dir === 1) content?.querySelector<HTMLElement>('[data-fk="back"]')?.focus()
     return
   }
 

@@ -215,6 +215,7 @@ html, body {
 .sys-btn:focus-visible,
 .scan-host-card:focus-visible,
 .scan-host:focus-visible,
+.host-port:focus-visible,
 .select-input:focus-visible,
 .check-input:focus-visible {
   outline: 3px dashed rgba(255, 255, 255, 0.9);
