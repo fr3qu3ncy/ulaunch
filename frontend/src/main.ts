@@ -731,7 +731,15 @@ function render() {
   app.appendChild(header(lastNet))
   app.appendChild(nav())
   const strip = app.querySelector<HTMLElement>('.nav-strip')
-  if (strip) strip.scrollLeft = prevScroll
+  if (strip) {
+    /* MUST use scrollTo with behavior:'instant'. A bare `strip.scrollLeft =`
+       assignment honours the strip's CSS scroll-behavior:smooth in Chrome —
+       the rebuilt strip (at 0) then ANIMATES left→right to prevScroll on
+       every Enter into a tool (M17: "go to settings, back to scan/VPN, we
+       see the scroll from left to the selected icon"). The rAF-trace showed
+       the sweep with zero scrollBy/scrollTo calls — only this setter. */
+    strip.scrollTo({ left: prevScroll, behavior: 'instant' })
+  }
   if (screen === 'network') app.appendChild(homeContent(lastNet))
   else if (screen === 'about') app.appendChild(aboutContent())
   else if (screen === 'vpn') app.appendChild(vpnContent())
