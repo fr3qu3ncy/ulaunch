@@ -129,6 +129,16 @@ class Scanner:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def clear(self) -> int:
+        """Cancel any live jobs and drop the whole store. Returns count."""
+        with self._lock:
+            for j in list(self._jobs.values()):
+                if j.status in ("pending", "running"):
+                    j.cancel()
+            n = len(self._jobs)
+            self._jobs.clear()
+            return n
+
     def _public(self, j: ScanJob) -> dict:
         return {
             "id": j.id, "subnet": j.subnet, "interface": j.interface,

@@ -293,6 +293,12 @@ def scan_jobs() -> list:
     return scanner.jobs()
 
 
+@app.delete("/api/scan/jobs")
+def scan_jobs_clear() -> dict:
+    """Cancel any live jobs and drop the whole store (test hook + reset)."""
+    return {"cleared": scanner.clear()}
+
+
 @app.get("/api/scan/jobs/{job_id}")
 def scan_job(job_id: str) -> dict:
     job = scanner.get(job_id)

@@ -94,6 +94,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
 
   /* phases: pick -> scan | results */
   let phase: 'pick' | 'scan' | 'results' = 'pick'
+  let restored = false /* results came from the job store, not this mount */
   let options: SubnetOption[] = []
   let selIndex = 0
   let flags: ScanFlags = { ...DEFAULT_FLAGS }
@@ -254,6 +255,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
       currentJob = await r.json() as ScanState
       lastState = currentJob
       jobStarted = true
+      restored = false
       phase = 'scan'
       liveLog = []
       connectWs(currentJob.id)
@@ -291,6 +293,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
         } else {
           phase = 'results'
           jobStarted = false
+          restored = false
           ws?.close()
           render()
         }
@@ -376,7 +379,8 @@ export function mountScan(container: HTMLElement): ScanHandle {
     if (!st) { c.appendChild(el('div', 'empty', 'no scan')); root.appendChild(c); return }
 
     const head = el('div', 'scan-head')
-    head.innerHTML = `<span class="scan-target">${st.subnet}</span>`
+    head.innerHTML = `<span class="scan-target">${st.subnet}</span>` +
+      (restored ? '<span class="scan-last-tag">LAST SCAN</span>' : '')
     const dur = st.finished - st.started
     head.appendChild(el('span', `scan-status ${st.status}`,
       `${st.status.toUpperCase()} · ${dur.toFixed(0)}s`))
@@ -398,7 +402,8 @@ export function mountScan(container: HTMLElement): ScanHandle {
         const d = el('div', 'scan-host')
         d.tabIndex = 0
         d.dataset.fk = `host:${h.ip}`
-        d.innerHTML = `<b>${h.ip}</b>${h.names.length ? `  ${h.names.join(', ')}` : ''}`
+        d.innerHTML = `<b>${h.ip}</b>` +
+          (h.names.length ? ` <span class="hsep">|</span> <span class="scan-hostname">${h.names.join(', ')}</span>` : '')
         g.appendChild(d)
       }
       c.appendChild(g)
@@ -424,6 +429,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
       phase = 'pick'
       lastState = null
       liveLog = []
+      restored = false
       ws?.close()
       render()
     })
@@ -445,7 +451,9 @@ export function mountScan(container: HTMLElement): ScanHandle {
       card.tabIndex = 0
       card.dataset.fk = `host:${ip}`
       const names = lastState?.hosts.find(h => h.ip === ip)?.names ?? []
-      card.innerHTML = `<div class="scan-host-card-ip"><b>${ip}</b>${names.length ? ` <span class="dim">${names.join(', ')}</span>` : ''}</div>`
+      card.innerHTML = `<div class="scan-host-card-ip"><b>${ip}</b>` +
+        (names.length ? `<span class="hsep">|</span><span class="scan-hostname">${names.join(', ')}</span>` : '') +
+        `</div>`
       const tbl = el('div', 'port-table')
       const rows = el('div', 'port-row port-row-head')
       rows.innerHTML = '<span>PORT</span><span>SVC</span><span>DETAIL</span>'
@@ -478,10 +486,36 @@ export function mountScan(container: HTMLElement): ScanHandle {
     else renderResults()
   }
 
-  /* initial data */
+  /* initial data. If a scan already exists in the job store (a previous
+     mount's scan, still running or finished — jobs live server-side and
+     outlive tool switches), restore it instead of showing the pick form:
+     the user keeps seeing the last scan results, and NEW SCAN is the
+     explicit way back to the pick screen. */
   scanSubnets()
     .then(o => { options = o; if (phase === 'pick') render() })
     .catch(() => { if (phase === 'pick') render() })
+  scanJobs().then(jobs => {
+    if (destroyed) return
+    if (phase !== 'pick') return /* a scan started before jobs resolved */
+    const live = jobs.find(j => j.status === 'running' || j.status === 'pending')
+    if (live) {
+      currentJob = live
+      lastState = live
+      jobStarted = true
+      liveLog = live.log_tail.map(l => `[${live.stage}] ${l}`)
+      phase = 'scan'
+      connectWs(live.id)
+      render()
+      return
+    }
+    const last = jobs.find(j => j.status === 'done' || j.status === 'error' || j.status === 'cancelled')
+    if (last) {
+      lastState = last
+      restored = true
+      phase = 'results'
+      render()
+    }
+  }).catch(() => {})
 
   /* nmap availability check — gates START + drives the install banner */
   fetch('/api/tools').then(r => r.ok ? r.json() : null).then(t => {

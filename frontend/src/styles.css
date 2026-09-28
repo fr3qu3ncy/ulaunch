@@ -626,8 +626,17 @@ html, body {
   display: flex; align-items: baseline; gap: 1em;
   font-family: var(--font-display);
 }
-.scan-target { font-size: 1.6em; font-weight: 700; color: var(--cyan); text-shadow: 0 0 10px rgba(0,245,255,0.5); }
-.scan-status { font-size: 1.05em; font-weight: 700; letter-spacing: 0.2em; color: var(--dim); }
+.scan-target { font-size: 1.7em; font-weight: 700; color: var(--cyan); text-shadow: 0 0 10px rgba(0,245,255,0.5); }
+/* results restored from the job store after a tool switch: make clear
+   these are the previous scan's results (NEW SCAN starts a fresh one) */
+.scan-last-tag {
+  font-size: 0.95em; font-weight: 700; letter-spacing: 0.18em;
+  color: var(--magenta); border: 1px solid rgba(255, 46, 196, 0.5);
+  border-radius: 5px; padding: 0.15em 0.6em;
+  text-shadow: 0 0 8px rgba(255, 46, 196, 0.6);
+  background: rgba(255, 46, 196, 0.06);
+}
+.scan-status { font-size: 1.15em; font-weight: 700; letter-spacing: 0.2em; color: var(--dim); }
 .scan-status.running { color: var(--amber); animation: pulse 1.4s ease-in-out infinite; }
 .scan-status.done { color: var(--green); }
 .scan-status.error { color: var(--red); }
@@ -722,7 +731,14 @@ html, body {
 .scan-hosts { display: flex; flex-direction: column; gap: 0.8em; }
 .scan-host {
   padding: 0.4em 0.2em;
-  font-size: 1.15em; letter-spacing: 0.03em;
+  font-size: 1.35em; letter-spacing: 0.03em;
+}
+/* separator between IP and hostname in the results (M19) */
+.scan-host .hsep, .scan-host-card-ip .hsep { color: var(--dim); font-weight: 400; margin: 0 0.6em; }
+/* hostname in the SCAN purple, same size as the IP */
+.scan-hostname {
+  color: var(--magenta); font-weight: 600;
+  text-shadow: 0 0 8px rgba(255, 46, 196, 0.5);
 }
 .scan-host-card {
   background: var(--panel);
@@ -732,18 +748,17 @@ html, body {
 }
 .scan-host-card-ip {
   font-family: var(--font-display);
-  font-size: 1.3em; font-weight: 700; margin-bottom: 0.5em;
+  font-size: 1.55em; font-weight: 700; margin-bottom: 0.5em;
 }
-.scan-host-card-ip .dim { color: var(--dim); font-size: 1em; font-weight: 500; }
 
 .port-table { display: flex; flex-direction: column; gap: 0.3em; }
 .port-row {
   display: grid;
-  grid-template-columns: 120px 220px 1fr;
+  grid-template-columns: 130px 240px 1fr;
   gap: 0.8em; align-items: baseline;
-  padding: 0.35em 0.5em;
+  padding: 0.4em 0.5em;
   border-radius: 4px;
-  font-size: 1.05em;
+  font-size: 1.15em;
 }
 .port-row-head {
   color: var(--dim); font-size: 0.9em; letter-spacing: 0.14em;
