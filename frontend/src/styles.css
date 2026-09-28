@@ -10,6 +10,7 @@
   --amber: #ffc247;
   --red: #ff3b5c;
   --text: #d7e6ff;
+  --soft: #9db2d8; /* readable secondary text — brighter than --dim */
   --dim: #5b6b8c;
   --font-display: 'Orbitron', 'Rajdhani', sans-serif;
   --font-body: 'Rajdhani', 'Orbitron', sans-serif;
@@ -598,7 +599,7 @@ html, body {
   border-radius: 8px;
   padding: 0.8em 1em;
   font-family: monospace;
-  font-size: 0.95em; line-height: 1.45;
+  font-size: 1.1em; line-height: 1.45;
   color: var(--green);
   white-space: pre-wrap; word-break: break-word;
   min-height: 90px; max-height: 26vh;
@@ -719,7 +720,7 @@ html, body {
   border-radius: 8px;
   padding: 0.8em 1em;
   font-family: monospace;
-  font-size: 0.9em; line-height: 1.4;
+  font-size: 1.1em; line-height: 1.4;
   color: var(--green);
   white-space: pre-wrap; word-break: break-word;
   flex: 1; min-height: 120px; max-height: 30vh;
@@ -769,7 +770,7 @@ html, body {
 .port-row .p-port { font-family: var(--font-display); font-weight: 700; color: var(--cyan); }
 .port-row.filtered .p-port { color: var(--dim); }
 .port-row .p-svc { font-weight: 600; }
-.port-row .p-detail { color: var(--dim); font-size: 0.95em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.port-row .p-detail { color: var(--soft); font-size: 1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── idle overlay (M4) ── */
 .overlay {

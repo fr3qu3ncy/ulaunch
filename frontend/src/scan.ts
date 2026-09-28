@@ -215,8 +215,12 @@ export function mountScan(container: HTMLElement): ScanHandle {
     }
     root.appendChild(c)
     if (fk) {
-      root.querySelector<HTMLElement>(`[data-fk="${fk}"]`)?.focus()
-      return
+      const prev = root.querySelector<HTMLElement>(`[data-fk="${fk}"]`)
+      if (prev) { prev.focus(); return }
+      /* the fk control lived in a different view (e.g. NEW SCAN re-rendered
+         us from results into pick): fall through so the default focus
+         below drops the cursor on the first control instead of stranding
+         it on body (where the next arrow key would jump to the icon bar). */
     }
     /* focus is OUTSIDE the scan view (e.g. sitting on the SCAN tile after
        Enter, or body on first mount): drop it onto the first control so the
