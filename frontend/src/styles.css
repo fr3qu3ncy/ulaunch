@@ -87,10 +87,16 @@ html, body {
   overflow-y: hidden;
   scrollbar-width: none;           /* firefox */
   scroll-behavior: smooth;
+  /* vertical padding so the tile's dashed focus outline (3px + 3px offset)
+     and the active tile's glow fit INSIDE the strip's clip box — without
+     it the outline's top/bottom edges are chopped off by overflow:hidden */
+  padding: 9px 2px;
 }
 .nav-strip::-webkit-scrollbar { display: none; }
 /* the edge arrows: as tall as the tiles, as thin as possible, a narrow
-   triangle pointing the way they scroll */
+   triangle pointing the way they scroll. A zero-sized content box, so the
+   borders alone draw a clean triangle (any content box turns it into a
+   trapezoid and muddies the point). */
 .nav-arrow {
   flex: 0 0 auto;
   width: 1.15em;
@@ -105,18 +111,23 @@ html, body {
 .nav-arrow.hidden { display: none; }
 .nav-arrow .tri {
   display: block;
-  width: 0.45em; height: 1.7em;
+  width: 0; height: 0;
+  /* without border-box the borders themselves inflate the box back to
+     non-zero and the "triangle" becomes a trapezoid */
+  box-sizing: border-box;
 }
+/* left arrow → points LEFT (reveals the icons off-screen to the left) */
 .nav-arrow-left .tri {
-  border-top: 0.85em solid transparent;
-  border-bottom: 0.85em solid transparent;
-  border-left: 0.45em solid var(--cyan);
+  border-top: 1.5em solid transparent;
+  border-bottom: 1.5em solid transparent;
+  border-left: 0.55em solid var(--cyan);
   filter: drop-shadow(0 0 6px rgba(0, 245, 255, 0.7));
 }
+/* right arrow → points RIGHT (reveals the icons off-screen to the right) */
 .nav-arrow-right .tri {
-  border-top: 0.85em solid transparent;
-  border-bottom: 0.85em solid transparent;
-  border-right: 0.45em solid var(--cyan);
+  border-top: 1.5em solid transparent;
+  border-bottom: 1.5em solid transparent;
+  border-right: 0.55em solid var(--cyan);
   filter: drop-shadow(0 0 6px rgba(0, 245, 255, 0.7));
 }
 .nav-arrow:hover, .nav-arrow:focus-visible { color: var(--magenta); }

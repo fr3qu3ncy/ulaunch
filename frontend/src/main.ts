@@ -107,7 +107,7 @@ function header(net: NetInfo | null): HTMLElement {
    TIME (wrapping) and the strip auto-scrolls to follow the cursor. The
    edge arrows are visual indicators (plus clickable page-scrolls) — they
    show while there are still tiles off-screen in that direction. They are
-   NOT keyboard stops: the three-stop Tab cycle is logo → [row] → content. */
+   NOT keyboard stops: the Tab cycle is just logo ⇄ [row]. */
 function nav(): HTMLElement {
   const n = el('nav', `nav${screen !== 'about' ? ' has-active' : ''}`)
   const mkArrow = (cls: string, title: string, dir: 1 | -1) => {
@@ -122,6 +122,9 @@ function nav(): HTMLElement {
   }
   const left = mkArrow('nav-arrow-left', 'more tools to the left', -1)
   const strip = el('div', 'nav-strip')
+  /* keep the edge arrows in sync with ANY scroll of the strip (wheel,
+     drag, programmatic) — not just our own page-scroll animations */
+  strip.addEventListener('scroll', () => updateNavArrows(), { passive: true })
   for (const t of TILES) {
     const d = el('button', `tile ${screen === t.id ? 'active' : ''}`)
     d.dataset.accent = t.accent
@@ -136,48 +139,66 @@ function nav(): HTMLElement {
   n.appendChild(left)
   n.appendChild(strip)
   n.appendChild(right)
-  updateNavArrows()
+  /* arrow visibility is evaluated at the end of render() — while this
+     node is still detached, scrollWidth/clientWidth are 0 and the test
+     would be meaningless (and the left arrow would stay visible on load) */
   return n
 }
-/* show/hide the edge arrows based on how far the strip can scroll */
+/* show/hide the edge arrows based on how far the strip can scroll.
+   scrollWidth - offsetWidth is the true max scrollLeft (clientWidth
+   includes the strip's padding, which would keep the right arrow
+   "available" past the end of the scroll) */
 function updateNavArrows() {
   const strip = app.querySelector<HTMLElement>('.nav-strip')
   if (!strip) return
   const n = strip.parentElement as HTMLElement
   const left = n.querySelector<HTMLElement>('.nav-arrow-left')
   const right = n.querySelector<HTMLElement>('.nav-arrow-right')
-  const over = strip.scrollWidth - strip.clientWidth
+  const over = Math.max(0, strip.scrollWidth - strip.offsetWidth)
   const canL = strip.scrollLeft > 2
   const canR = strip.scrollLeft < over - 2
   if (left) left.classList.toggle('hidden', !canL)
   if (right) right.classList.toggle('hidden', !canR)
 }
-/* clickable edge arrow: scroll the strip one page in `dir`; if the cursor
-   (a focused tile) ends up off-screen, park it on the nearest visible
-   tile at that edge */
+/* clickable edge arrow: page-scroll the strip in `dir`. The arrows track
+   the motion (re-evaluated on every scroll event), and when it settles a
+   tile that had focus but ended up off-screen is re-parked on the nearest
+   fully visible tile at that edge */
 function pageScroll(dir: 1 | -1) {
   const strip = app.querySelector<HTMLElement>('.nav-strip')
   if (!strip) return
-  strip.scrollBy({ left: dir * Math.max(60, strip.clientWidth - 80), behavior: 'smooth' })
-  const tiles = Array.from(strip.querySelectorAll<HTMLElement>('.tile'))
-  if (tiles.length) {
+  let done = false
+  const finish = () => {
+    if (done) return
+    done = true
+    strip.removeEventListener('scroll', onMove)
+    strip.removeEventListener('scrollend', finish)
+    window.clearTimeout(watchdog)
+    updateNavArrows()
     const ae = document.activeElement as HTMLElement | null
-    if (ae && ae.classList.contains('tile')) {
-      requestAnimationFrame(() => {
-        const nr = strip.getBoundingClientRect()
-        const home = tiles.find(t => {
-          const r = t.getBoundingClientRect()
-          return r.left >= nr.left - 1 && r.right <= nr.right + 1
-        }) ?? tiles[dir === 1 ? tiles.length - 1 : 0]
-        home.focus({ preventScroll: true })
-        updateNavArrows()
-      })
-    } else {
-      updateNavArrows()
-    }
+    if (!ae || !ae.classList.contains('tile')) return
+    const nr = strip.getBoundingClientRect()
+    const tiles = Array.from(strip.querySelectorAll<HTMLElement>('.tile'))
+    const home = tiles.find(t => {
+      const r = t.getBoundingClientRect()
+      return r.left >= nr.left - 1 && r.right <= nr.right + 1
+    }) ?? (dir === 1 ? tiles[tiles.length - 1] : tiles[0])
+    home.focus({ preventScroll: true })
+    updateNavArrows()
   }
+  /* the arrows track the motion (re-evaluated on every scroll event), and
+     when the scroll SETTLES (scrollend — not a guessed timeout, the
+     animation duration is distance-dependent) a tile that had focus but
+     ended up off-screen is re-parked on the nearest fully visible tile */
+  const onMove = () => updateNavArrows()
+  strip.addEventListener('scroll', onMove, { passive: true })
+  strip.addEventListener('scrollend', finish, { passive: true })
+  const watchdog = window.setTimeout(finish, 1500)
+  strip.scrollBy({ left: dir * Math.max(60, strip.clientWidth - 80), behavior: 'smooth' })
 }
-/* scroll the strip just enough to fully reveal a tile (cursor follow) */
+/* scroll the strip just enough to fully reveal a tile (cursor follow).
+   A direct scrollBy on the strip — NOT scrollIntoView, which would also
+   scroll ancestor scrollables (the page) and drift the whole layout. */
 function revealTile(t: HTMLElement) {
   const strip = app.querySelector<HTMLElement>('.nav-strip')
   if (!strip) return
@@ -669,7 +690,7 @@ function footer(): HTMLElement {
   const f = el('footer', 'foot')
   f.innerHTML =
     '<span><kbd>←→</kbd>icon row</span><span><kbd>Enter</kbd>open tool</span>' +
-    '<span><kbd>Tab</kbd>logo · row · options</span><span><kbd>⌫</kbd>/<kbd>Esc</kbd>back</span>' +
+    '<span><kbd>Tab</kbd>logo · icon bar</span><span><kbd>⌫</kbd>/<kbd>Esc</kbd>back</span>' +
     '<span><kbd>Esc</kbd>menu</span>'
   return f
 }
@@ -735,33 +756,33 @@ function render() {
             behavior: 'auto',
           })
         }
-        updateNavArrows()
       }
     }
   }
+  /* the strip is freshly mounted — evaluate which edge arrows belong
+     (only runs while the strip is actually in the DOM) */
+  updateNavArrows()
 }
 
 /* ───────────────────────── state ───────────────────────── */
-/* Keyboard model (three tab stops):
-   TAB:  logo → [tool row] → content, wrapping. The whole tool row is ONE
-     tab stop — Tab steps out of it, Shift+Tab back in.
-   TOOL ROW (the scrollable tile strip): ←/→ move between the tool icons,
+/* Keyboard model (two tab stops):
+   TAB:  logo ⇄ [icon bar], wrapping. The whole icon bar is ONE tab stop —
+     Tab never drops into a tool's content (that would trap the user);
+     Enter is the way in, Backspace/Esc the way back out.
+   ICON BAR (the scrollable tile strip): ←/→ move between the tool icons,
      ONE AT A TIME (wrapping); the strip auto-scrolls to follow the cursor.
      Enter drops into the tool under the cursor (focus lands on its first
      control). The edge arrows are visual indicators, not keyboard stops.
    INSIDE A TOOL: ←/→ (and ↑/↓) cycle the tool's own controls in DOM order
      — this is how you walk the options. Backspace or Esc exits the tool:
      focus returns to its tile. Tab/Shift+Tab cycle the tool's controls.
-   ABOUT: no content controls — focus stays on the logo (Tab → the row). */
+   ABOUT: no content controls — focus stays on the logo (Tab → the bar). */
 function activeTile(): HTMLElement | null {
   return app.querySelector<HTMLElement>('.nav .tile.active')
 }
 function focusContentFirst(): void {
   const first = app.querySelector<HTMLElement>('.content button:not([disabled]), .content input:not([disabled]), .content select:not([disabled]), .content textarea:not([disabled]), .content [tabindex="0"]:not([disabled])')
   first?.focus()
-}
-function firstContentEl(): HTMLElement | null {
-  return app.querySelector<HTMLElement>('.content button:not([disabled]), .content input:not([disabled]), .content select:not([disabled]), .content textarea:not([disabled]), .content [tabindex="0"]:not([disabled])')
 }
 function lastContentEl(): HTMLElement | null {
   const c = app.querySelector<HTMLElement>('.content')
@@ -1010,42 +1031,30 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
     return
   }
 
-  /* Tab: the three-stop model — logo → [tool row] → content, wrapping.
-     Inside content, Tab/Shift+Tab cycle the tool's own controls (also
-     the reliable way OUT of a text input, where arrows move the caret).
-     The whole tool row is ONE stop: Tab leaves it, Shift+Tab re-enters
-     it; arrows walk it from either entry point. */
+  /* Tab: the two-stop model — logo ⇄ [icon bar], wrapping. The whole
+     tool row is ONE tab stop (arrows walk it). Tab does NOT drop into a
+     tool's content — that would trap the user inside the tool; Enter is
+     the way in (and Backspace/Esc the way back out). Inside content,
+     Tab/Shift+Tab still cycle the tool's own controls (also the reliable
+     way OUT of a text input, where arrows move the caret). */
   if (e.key === 'Tab') {
     e.preventDefault()
-    const d = e.shiftKey ? -1 : 1
-    if (stop === 'content') { stepInContent(d as 1 | -1); return }
+    if (stop === 'content') { stepInContent(e.shiftKey ? -1 : 1); return }
     if (stop === 'body') {
-      const first = firstContentEl()
-      if (first) { first.focus(); return }
-    }
-    if (stop === 'logo') {
-      if (d === 1) {
-        const entry = rowEntryTile()
-        if (entry) { entry.focus({ preventScroll: true }); revealTile(entry) }
-      } else {
-        const last = lastContentEl()
-        if (last) last.focus()
-        else rowEntryTile()?.focus()
-      }
+      /* no explicit stop (e.g. after a re-render): enter the icon bar */
+      const entry = rowEntryTile()
+      if (entry) { entry.focus({ preventScroll: true }); revealTile(entry) }
+      else app.querySelector<HTMLElement>('.logo')?.focus()
       return
     }
+    if (stop === 'logo') {
+      const entry = rowEntryTile()
+      if (entry) { entry.focus({ preventScroll: true }); revealTile(entry) }
+      return
+    }
+    /* icon bar (or an edge arrow after a mouse click) -> the logo */
     if (stop === 'tile' || stop === 'arrow') {
-      if (d === 1) {
-        /* Tab from the icon bar drops into the CURRENTLY ACTIVE tool's
-           options/results (the open screen's content) — NOT necessarily
-           the highlighted tile. Screens without content controls (about,
-           network) wrap back to the logo. */
-        const first = firstContentEl()
-        if (first) first.focus()
-        else app.querySelector<HTMLElement>('.logo')?.focus()
-      } else {
-        app.querySelector<HTMLElement>('.logo')?.focus()
-      }
+      app.querySelector<HTMLElement>('.logo')?.focus()
       return
     }
     return
