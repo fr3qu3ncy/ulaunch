@@ -1015,6 +1015,15 @@ function listArrow(dir: 1 | -1, card: HTMLElement, list: HTMLElement[],
   /* UP: scroll the missing top edge in, a few lines per press */
   const room = -top
   if (room > 0.5) {
+    /* M24: on the FIRST item, UP brings the heading back — scroll the pane
+       to the top (instead of scrolling the tall item up line-by-line, which
+       would leave the heading off-screen). A short first item reaches here
+       via the jump-to-previous branch below; a tall first item (taller than
+       the pane) via this one. */
+    if (i === 0) {
+      if (content.scrollTop > 0.5) content.scrollTo({ top: 0, behavior: 'smooth' })
+      return true
+    }
     if (content.scrollTop <= 0.5) {
       /* card taller than the whole pane at the top: jump to the previous
          card (or stay clamped on the first) */
@@ -1030,11 +1039,23 @@ function listArrow(dir: 1 | -1, card: HTMLElement, list: HTMLElement[],
   /* card top is at/above the pane top: jump to the previous card */
   if (i > 0) {
     list[i - 1].focus({ preventScroll: true })
-    const pb = list[i - 1].getBoundingClientRect().bottom - vr.top
-    content.scrollTo({ top: Math.max(0, content.scrollTop + pb - 12), behavior: 'smooth' })
+    if (i - 1 === 0) {
+      /* M24: landing on the FIRST item — pin the pane to the top so the
+         heading above it is visible. The old code aligned the first item's
+         BOTTOM to the pane top, which pushed its top (and the heading) off
+         the top of the screen after going down the list and back up. */
+      content.scrollTo({ top: 0, behavior: 'smooth' })
+    } else {
+      const pb = list[i - 1].getBoundingClientRect().bottom - vr.top
+      content.scrollTo({ top: Math.max(0, content.scrollTop + pb - 12), behavior: 'smooth' })
+    }
     return true
   }
-  return true /* clamped at the top */
+  /* clamped at the top: already on the first item — make sure the pane is
+     actually at the top so the heading is visible (M24: a tall first item
+     can leave the heading off-screen while scrollTop > 0) */
+  if (i === 0) content.scrollTo({ top: 0, behavior: 'smooth' })
+  return true
 }
 
 document.addEventListener('keydown', (e: KeyboardEvent) => {
