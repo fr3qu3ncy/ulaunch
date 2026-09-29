@@ -867,6 +867,8 @@ html, body {
   margin-top: 0.4em;
 }
 .wifi-group b { text-shadow: 0 0 8px rgba(163, 94, 255, 0.6); }
+/* AP count per group — same green glow as the total found count */
+.wifi-group-n { color: var(--green); text-shadow: 0 0 8px rgba(61,255,158,0.6); }
 .wifi-cell {
   background: var(--panel);
   border: 1px solid var(--panel-line);
@@ -893,7 +895,7 @@ html, body {
 }
 .wifi-cell-meta {
   font-family: monospace;
-  font-size: 1em; line-height: 1.5;
+  font-size: 1.2em; line-height: 1.5;
   color: var(--soft);
 }
 .wifi-cell-meta b { color: var(--text); }

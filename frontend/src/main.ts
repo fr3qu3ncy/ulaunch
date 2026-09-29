@@ -832,6 +832,14 @@ function focusContentFirst(): void {
     const card = c.querySelector<HTMLElement>('.scan-host-card, .scan-host')
     if (card) { c.scrollTop = 0; card.focus({ preventScroll: true }); return }
   }
+  /* Wifi RESULTS re-entry: the top STOP SCAN button precedes the cell list
+     in the DOM, so the generic "first control" would land on it. The
+     keyboard starts on the first cell — focus that and pin the pane to the
+     top (same as the scan results' top NEW SCAN, M22/M23). */
+  {
+    const cell = c?.querySelector<HTMLElement>('.wifi-cell')
+    if (cell) { c!.scrollTop = 0; cell.focus({ preventScroll: true }); return }
+  }
   const first = app.querySelector<HTMLElement>('.content button:not([disabled]), .content input:not([disabled]), .content select:not([disabled]), .content textarea:not([disabled]), .content [tabindex="0"]:not([disabled])')
   first?.focus()
 }
@@ -1233,7 +1241,9 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   /* wifi results (M25): ↑/↓ walk the cell list the same way — a few lines
      per press while a cell overflows the pane (group headers add height),
      jump between cells once fully visible. Past the LAST cell ↓ → the
-     SCAN AGAIN / STOP SCAN action button below the list. */
+     bottom STOP SCAN / SCAN AGAIN button; past the FIRST cell ↑ → the TOP
+     STOP SCAN button (above the list, like the nmap results' top NEW
+     SCAN — reachable without scrolling after a tool switch). */
   if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
       t && t.classList.contains('wifi-cell')) {
     e.preventDefault()
@@ -1241,8 +1251,35 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
     /* ~2 cells of height per press */
     const line = () => Math.max(24, Math.round(
       ((content?.querySelector('.wifi-cell') as HTMLElement | null)?.offsetHeight || 56) * 2))
+    /* UP from the first cell → the top action button (listArrow would
+       just clamp the pane at the top) */
+    if (dir === -1 && cellList.indexOf(t) === 0) {
+      content?.querySelector<HTMLElement>('[data-fk="wifi:action-top"]')?.focus()
+      return
+    }
     if (listArrow(dir, t, cellList, content, line)) return
     if (dir === 1) content?.querySelector<HTMLElement>('[data-fk="wifi:action-bottom"]')?.focus()
+    return
+  }
+
+  /* wifi action buttons: ↓ from the TOP button → first cell; ↑ from the
+     BOTTOM button → last cell (the nmap NEW SCAN buttons get the same
+     treatment via the generic in-content cycle) */
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+      t && (t.dataset.fk === 'wifi:action-top' || t.dataset.fk === 'wifi:action-bottom')) {
+    e.preventDefault()
+    const cells = content?.querySelectorAll<HTMLElement>('.wifi-cell')
+    if (t.dataset.fk === 'wifi:action-top' && dir === 1 && cells?.length) {
+      cells[0].focus({ preventScroll: true })
+      if (content) content.scrollTop = 0
+      return
+    }
+    if (t.dataset.fk === 'wifi:action-bottom' && dir === -1 && cells?.length) {
+      const last = cells[cells.length - 1]
+      last.scrollIntoView({ block: 'nearest' })
+      last.focus({ preventScroll: true })
+      return
+    }
     return
   }
 

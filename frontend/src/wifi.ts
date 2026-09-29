@@ -233,6 +233,16 @@ export function mountWifi(container: HTMLElement): WifiHandle {
     return b
   }
 
+  /* the action button appears TWICE — at the TOP of the results list (so a
+     tool switch back into the tool finds STOP without scrolling, like the
+     nmap results' top NEW SCAN) and at the bottom (where ↓ from the last
+     cell lands). Both run the same start/stop. */
+  function actionRow(): HTMLElement {
+    const row = el('div', 'btn-row')
+    row.appendChild(actionButton('wifi:action-top'))
+    return row
+  }
+
   /* ── views ─────────────────────────────────────────────────── */
   function renderPick() {
     /* remember the focused control (stable data-fk) across re-renders */
@@ -323,6 +333,10 @@ export function mountWifi(container: HTMLElement): WifiHandle {
       (running ? ` · SCANNING · updated ${stamp}` : ` · updated ${stamp}`)
     c.appendChild(count)
 
+    /* top action button — reachable without scrolling after a tool switch
+       (the nmap results' top NEW SCAN, same idea) */
+    c.appendChild(actionRow())
+
     if (status.status === 'error') {
       c.appendChild(el('div', 'form-err',
         `scan error: ${status.error || 'unknown'}`))
@@ -334,7 +348,9 @@ export function mountWifi(container: HTMLElement): WifiHandle {
       for (const g of groups) {
         const c0 = g[0]
         const gtitle = el('div', 'wifi-group')
-        gtitle.innerHTML = `<b>${c0.band} GHz</b> · CH ${c0.channel ?? '?'} · ${g.length}`
+        gtitle.innerHTML =
+          `<b>${esc(c0.band)} GHz</b> · CH ${c0.channel ?? '?'} ` +
+          `<span class="wifi-group-n">(${g.length})</span>`
         c.appendChild(gtitle)
         for (const cell of g) {
           ci++
@@ -353,14 +369,14 @@ export function mountWifi(container: HTMLElement): WifiHandle {
           d.appendChild(headRow)
           const meta = el('div', 'wifi-cell-meta')
           const bits: string[] = []
-          bits.push(`CH <b>${cell.channel ?? '?'}</b>`)
-          if (cell.frequency) bits.push(`${cell.frequency} GHz`)
+          bits.push(`CH <b>${esc(String(cell.channel ?? '?'))}</b>`)
+          if (cell.frequency) bits.push(`${esc(String(cell.frequency))} GHz`)
           if (cell.signal_dbm !== null) bits.push(`SIG <b>${cell.signal_dbm}</b> dBm`)
           if (cell.quality !== null && cell.quality_max !== null) {
             bits.push(`QUAL ${cell.quality}/${cell.quality_max} [${qbar(cell.quality, cell.quality_max)}]`)
           }
-          bits.push(`BSSID ${cell.bssid}`)
-          meta.textContent = bits.join(' · ')
+          bits.push(`BSSID ${esc(cell.bssid)}`)
+          meta.innerHTML = bits.join(' · ')
           d.appendChild(meta)
           c.appendChild(d)
         }
@@ -401,8 +417,8 @@ export function mountWifi(container: HTMLElement): WifiHandle {
         : null
       renderResults()
       lastFingerprint = fingerprint(status)
-      if (fk === 'wifi:action-bottom') {
-        root.querySelector<HTMLElement>('[data-fk="wifi:action-bottom"]')?.focus()
+      if (fk === 'wifi:action-bottom' || fk === 'wifi:action-top') {
+        root.querySelector<HTMLElement>(`[data-fk="${fk}"]`)?.focus()
         return
       }
       if (focusedBssid) {
