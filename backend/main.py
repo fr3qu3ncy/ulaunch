@@ -23,6 +23,7 @@ import system
 from net import gather_net
 from scanner import scanner
 from wifiscan import wifi, wireless_adapters, iwlist_installed, probe_scan
+from ble import ble, bt_adapters, bluetooth_available
 from sudo import SudoRequired, sudo
 
 BASE = Path(__file__).resolve().parent
@@ -141,6 +142,7 @@ def tools() -> dict:
             "version": _nmap_version(nmap_path),
         },
         "openvpn": vpn.tool(),
+        "bluez": bluetooth_available(),
     }
 
 
@@ -160,7 +162,7 @@ def _nmap_version(path: str | None) -> str:
 @app.post("/api/tools/install")
 def tools_install(payload: dict) -> dict:
     tool = (payload or {}).get("tool", "")
-    if tool not in ("nmap", "openvpn", "wireless-tools"):
+    if tool not in ("nmap", "openvpn", "wireless-tools", "bluez"):
         raise HTTPException(400, "unknown tool")
     try:
         p = sudo.run("apt-get", "install", "-y", tool, timeout=900)
@@ -384,6 +386,47 @@ def wifi_scan_stop() -> dict:
 def wifi_scan_reset() -> dict:
     """Test hook: stop and clear the session."""
     wifi.reset()
+    return {"ok": True}
+
+
+# ── bluetooth (BLE) scan ────────────────────────────────────────
+
+@app.get("/api/ble/adapters")
+def ble_adapters() -> dict:
+    return {
+        "adapters": bt_adapters(),
+        "bluez": bluetooth_available(),
+    }
+
+
+@app.get("/api/ble/status")
+def ble_status() -> dict:
+    return ble.public()
+
+
+@app.post("/api/ble/scan/start")
+def ble_scan_start(payload: dict) -> dict:
+    adapter = (payload or {}).get("adapter") or None
+    # no root needed — but BlueZ must exist or the session would just
+    # error out after a second; fail fast with the install hint instead
+    if not bluetooth_available()["installed"]:
+        raise HTTPException(
+            400, "bluez bluetooth daemon is not installed — use the "
+                 "INSTALL BLUETOOTH button on the BT screen")
+    if adapter and not any(a["name"] == adapter for a in bt_adapters()):
+        raise HTTPException(400, f"unknown bluetooth adapter: {adapter}")
+    return ble.start(adapter)
+
+
+@app.post("/api/ble/scan/stop")
+def ble_scan_stop() -> dict:
+    return ble.stop()
+
+
+@app.delete("/api/ble/scan")
+def ble_scan_reset() -> dict:
+    """Test hook: stop and clear the session."""
+    ble.reset()
     return {"ok": True}
 
 

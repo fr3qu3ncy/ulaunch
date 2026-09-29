@@ -171,6 +171,7 @@ html, body {
 .tile[data-accent="amber"] { color: var(--amber); text-shadow: 0 0 8px rgba(255, 194, 71, 0.5); }
 .tile[data-accent="cyan"] { color: var(--cyan); text-shadow: 0 0 8px rgba(0, 245, 255, 0.5); }
 .tile[data-accent="violet"] { color: var(--violet); text-shadow: 0 0 8px rgba(163, 94, 255, 0.5); }
+.tile[data-accent="red"] { color: var(--red); text-shadow: 0 0 8px rgba(255, 59, 92, 0.5); }
 /* when a tool is selected, the unselected tiles drop to a dimmed white
    so the active one stands out — but ONLY while focus is inside the tool.
    As soon as focus returns to the tile row (Esc/Backspace), the neon
@@ -224,6 +225,7 @@ html, body {
 .scan-host:focus-visible,
 .host-port:focus-visible,
 .wifi-cell:focus-visible,
+.ble-cell:focus-visible,
 .select-input:focus-visible,
 .check-input:focus-visible {
   outline: 3px dashed rgba(255, 255, 255, 0.9);
@@ -899,6 +901,46 @@ html, body {
   color: var(--soft);
 }
 .wifi-cell-meta b { color: var(--text); }
+
+/* ── bluetooth (BLE) scan screen (M26) ────────────────────────── */
+.ble-root { display: flex; flex-direction: column; height: 100%; }
+.ble-content { display: flex; flex-direction: column; gap: 0.8em; height: 100%; }
+.ble-target {
+  font-family: var(--font-display);
+  font-size: 1.7em; font-weight: 700;
+  color: var(--red); text-shadow: 0 0 10px rgba(255, 59, 92, 0.5);
+}
+/* the inline bluetooth sigil on the BT tile — sized to the other icons */
+.tile .bt-logo { width: 1.1em; height: 1.1em; display: inline-block; vertical-align: -0.15em; }
+.ble-cell {
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  padding: 0.6em 1em;
+  display: flex; flex-direction: column; gap: 0.3em;
+}
+.ble-cell-head { display: flex; align-items: baseline; gap: 1em; flex-wrap: wrap; }
+.ble-name {
+  font-family: var(--font-display);
+  font-size: 1.35em; font-weight: 700;
+}
+.ble-name-hidden { color: var(--dim); font-weight: 500; font-style: italic; }
+.ble-maker {
+  font-family: var(--font-display);
+  font-size: 1.05em; font-weight: 700;
+  color: var(--red); text-shadow: 0 0 8px rgba(255, 59, 92, 0.4);
+}
+.ble-addr {
+  font-family: monospace;
+  font-size: 0.95em; font-weight: 600; letter-spacing: 0.06em;
+  color: var(--dim); margin-left: auto;
+}
+.ble-cell-meta {
+  font-family: monospace;
+  font-size: 1.2em; line-height: 1.5;
+  color: var(--soft);
+}
+.ble-cell-meta b { color: var(--text); }
 
 /* ── idle overlay (M4) ── */
 .overlay {

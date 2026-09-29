@@ -10,17 +10,25 @@ import {
 } from './api'
 import { mountScan, type ScanHandle } from './scan'
 import { mountWifi, type WifiHandle } from './wifi'
+import { mountBle, type BleHandle } from './ble'
 import * as overlay from './overlay'
 import { askSudo, type SudoOpts } from './sudo'
 import { askVpnCreds } from './vpnCreds'
 
-type Screen = 'network' | 'about' | 'vpn' | 'scan' | 'wifi' | 'system' | 'settings'
+type Screen = 'network' | 'about' | 'vpn' | 'scan' | 'wifi' | 'bt' | 'system' | 'settings'
 
 const TILES: { id: Screen; label: string; ico: string; accent: string }[] = [
   { id: 'network', label: 'NETWORK', ico: '⌗', accent: 'cyan' },
   { id: 'vpn', label: 'VPN', ico: '⛨', accent: 'green' },
   { id: 'scan', label: 'SCAN', ico: '⌖', accent: 'magenta' },
   { id: 'wifi', label: 'WIFI', ico: '📡', accent: 'violet' },
+  /* BT: the runic "ᛒ" bluetooth sigil — an inline SVG (not an emoji: the
+     device font has no bluetooth glyph and emoji render multicoloured,
+     breaking the neon monochrome theme). Current-stroke: it takes the
+     tile's red accent colour automatically. */
+  { id: 'bt', label: 'BT', ico:
+    '<svg class="bt-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6.5 6.5 17.5 17.5 12 23 12 1 17.5 6.5 6.5 17.5"/></svg>',
+    accent: 'red' },
   { id: 'system', label: 'SYSTEM', ico: '⏻', accent: 'amber' },
   { id: 'settings', label: 'SETTINGS', ico: '⚙', accent: '' },
 ]
@@ -38,6 +46,7 @@ let vpnOpenvpnInstalled: boolean | null = null
 let vpnLogTimer: number | null = null
 let scanHandle: ScanHandle | null = null
 let wifiHandle: WifiHandle | null = null
+let bleHandle: BleHandle | null = null
 
 /* ───────────────────────── helpers ───────────────────────── */
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -762,6 +771,11 @@ function render() {
     app.appendChild(holder)
     wifiHandle = mountWifi(holder)
   }
+  else if (screen === 'bt') {
+    const holder = el('div', 'content scan-holder')
+    app.appendChild(holder)
+    bleHandle = mountBle(holder)
+  }
   else if (screen === 'system') app.appendChild(systemContent())
   else app.appendChild(settingsContent())
   app.appendChild(footer())
@@ -835,9 +849,10 @@ function focusContentFirst(): void {
   /* Wifi RESULTS re-entry: the top STOP SCAN button precedes the cell list
      in the DOM, so the generic "first control" would land on it. The
      keyboard starts on the first cell — focus that and pin the pane to the
-     top (same as the scan results' top NEW SCAN, M22/M23). */
+     top (same as the scan results' top NEW SCAN, M22/M23). BT results are
+     the same shape (top action button above the device list). */
   {
-    const cell = c?.querySelector<HTMLElement>('.wifi-cell')
+    const cell = c?.querySelector<HTMLElement>('.wifi-cell, .ble-cell')
     if (cell) { c!.scrollTop = 0; cell.focus({ preventScroll: true }); return }
   }
   const first = app.querySelector<HTMLElement>('.content button:not([disabled]), .content input:not([disabled]), .content select:not([disabled]), .content textarea:not([disabled]), .content [tabindex="0"]:not([disabled])')
@@ -863,6 +878,7 @@ async function go(s: Screen) {
   screen = s
   if (prev === 'scan') { scanHandle?.destroy(); scanHandle = null }
   if (prev === 'wifi') { wifiHandle?.destroy(); wifiHandle = null }
+  if (prev === 'bt') { bleHandle?.destroy(); bleHandle = null }
   render()
   if (s === 'vpn') { await refreshVpn(); startLogPoll() }
   if (prev === 'vpn') stopLogPoll()
@@ -1238,43 +1254,47 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
     return
   }
 
-  /* wifi results (M25): ↑/↓ walk the cell list the same way — a few lines
-     per press while a cell overflows the pane (group headers add height),
+  /* wifi results (M25) / BT results (M26): ↑/↓ walk the cell/device list
+     the same way — a few lines per press while a cell overflows the pane,
      jump between cells once fully visible. Past the LAST cell ↓ → the
      bottom STOP SCAN / SCAN AGAIN button; past the FIRST cell ↑ → the TOP
      STOP SCAN button (above the list, like the nmap results' top NEW
      SCAN — reachable without scrolling after a tool switch). */
   if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
-      t && t.classList.contains('wifi-cell')) {
+      t && (t.classList.contains('wifi-cell') || t.classList.contains('ble-cell'))) {
     e.preventDefault()
-    const cellList = Array.from(content?.querySelectorAll<HTMLElement>('.wifi-cell') ?? [])
+    const cls = t.classList.contains('ble-cell') ? 'ble' : 'wifi'
+    const cellList = Array.from(
+      content?.querySelectorAll<HTMLElement>(`.${cls}-cell`) ?? [])
     /* ~2 cells of height per press */
     const line = () => Math.max(24, Math.round(
-      ((content?.querySelector('.wifi-cell') as HTMLElement | null)?.offsetHeight || 56) * 2))
+      ((content?.querySelector(`.${cls}-cell`) as HTMLElement | null)?.offsetHeight || 56) * 2))
     /* UP from the first cell → the top action button (listArrow would
        just clamp the pane at the top) */
     if (dir === -1 && cellList.indexOf(t) === 0) {
-      content?.querySelector<HTMLElement>('[data-fk="wifi:action-top"]')?.focus()
+      content?.querySelector<HTMLElement>(`[data-fk="${cls}:action-top"]`)?.focus()
       return
     }
     if (listArrow(dir, t, cellList, content, line)) return
-    if (dir === 1) content?.querySelector<HTMLElement>('[data-fk="wifi:action-bottom"]')?.focus()
+    if (dir === 1) content?.querySelector<HTMLElement>(`[data-fk="${cls}:action-bottom"]`)?.focus()
     return
   }
 
-  /* wifi action buttons: ↓ from the TOP button → first cell; ↑ from the
+  /* wifi/ble action buttons: ↓ from the TOP button → first cell; ↑ from the
      BOTTOM button → last cell (the nmap NEW SCAN buttons get the same
      treatment via the generic in-content cycle) */
   if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
-      t && (t.dataset.fk === 'wifi:action-top' || t.dataset.fk === 'wifi:action-bottom')) {
+      t && (t.dataset.fk === 'wifi:action-top' || t.dataset.fk === 'wifi:action-bottom'
+            || t.dataset.fk === 'ble:action-top' || t.dataset.fk === 'ble:action-bottom')) {
     e.preventDefault()
-    const cells = content?.querySelectorAll<HTMLElement>('.wifi-cell')
-    if (t.dataset.fk === 'wifi:action-top' && dir === 1 && cells?.length) {
+    const cls = t.dataset.fk!.startsWith('ble') ? 'ble' : 'wifi'
+    const cells = content?.querySelectorAll<HTMLElement>(`.${cls}-cell`)
+    if (t.dataset.fk === `${cls}:action-top` && dir === 1 && cells?.length) {
       cells[0].focus({ preventScroll: true })
       if (content) content.scrollTop = 0
       return
     }
-    if (t.dataset.fk === 'wifi:action-bottom' && dir === -1 && cells?.length) {
+    if (t.dataset.fk === `${cls}:action-bottom` && dir === -1 && cells?.length) {
       const last = cells[cells.length - 1]
       last.scrollIntoView({ block: 'nearest' })
       last.focus({ preventScroll: true })
@@ -1359,7 +1379,7 @@ async function refresh() {
     const first = !lastNet
     lastNet = net
     if (screen === 'vpn' || screen === 'scan' || screen === 'wifi'
-        || screen === 'system' || screen === 'settings') {
+        || screen === 'bt' || screen === 'system' || screen === 'settings') {
       /* update only the items that need it — the live header stats. VPN
          and SCAN update their own content (log poller / WebSocket), and
          SYSTEM and SETTINGS are static once loaded (power buttons never
