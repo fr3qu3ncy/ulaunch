@@ -14,6 +14,7 @@ shown when the device sends one — that is the model/identifier for most
 consumer devices.
 """
 import asyncio
+import contextlib
 import json
 import re
 import shutil
@@ -24,6 +25,8 @@ from pathlib import Path
 
 REFRESH_S = 5.0
 SCAN_TIMEOUT = 20
+
+BLUEZ_BUS_TIMEOUT = 6  # s — a wedged/absent bus must not hang the pick view
 
 DATA = Path(__file__).resolve().parent / "data" / "company_ids.json"
 
@@ -235,15 +238,103 @@ def _adapter_state(d: Path) -> dict:
     }
 
 
+def _adapters_from_bluez() -> list[dict]:
+    """Adapters straight from BlueZ over D-Bus (org.bluez
+    ObjectManager.GetManagedObjects) — the authoritative source: it is the
+    same path the rest of the stack (and bleak itself) uses. Returns []
+    when BlueZ can't be reached (no system bus, no bluetoothd, timeout) —
+    the caller then falls back to the kernel's sysfs view.
+
+    Why this is primary: on the uConsole (kernel 6.12, BCM4345C0 over
+    hci_uart) the kernel registers hci0 but never creates the sysfs
+    attribute files — /sys/class/bluetooth/hci0/ holds only
+    device/power/rfkill0/subsystem/uevent, NO address file. The sysfs
+    reader below skips such entries and reports "no adapter" even though
+    the radio works (the BT mouse connects fine through BlueZ). D-Bus has
+    the real data: Address, Name, Powered, Discoverable, Pairable.
+
+    One-shot pattern: connect, GetManagedObjects, disconnect. We must NOT
+    reuse bleak's BlueZManager (it adds signal listeners and expects the
+    bus connection to stay alive) and must not leave the bus connected in
+    a daemon thread that outlives the call. Runs in a fresh thread with its
+    own event loop — same shape as the scanner thread, because the app's
+    main loop is a sync FastAPI thread and MessageBus is asyncio-bound."""
+    from dbus_fast import BusType, Message, unpack_variants
+    from dbus_fast.aio.message_bus import MessageBus
+
+    ADAPTER_IFACE = "org.bluez.Adapter1"
+
+    async def probe() -> list[dict]:
+        bus = MessageBus(bus_type=BusType.SYSTEM)
+        try:
+            await bus.connect()
+        except Exception:
+            with contextlib.suppress(Exception):
+                bus.disconnect()
+            return []
+        out: list[dict] = []
+        try:
+            reply = await bus.call(Message(
+                destination="org.bluez",
+                path="/",
+                interface="org.freedesktop.DBus.ObjectManager",
+                member="GetManagedObjects",
+            ))
+            for path, interfaces in reply.body[0].items():
+                props = unpack_variants(interfaces).get(ADAPTER_IFACE)
+                if not props:
+                    continue
+                name = props.get("Address") or path.rsplit("/", 1)[-1]
+                out.append({
+                    "name": name,
+                    "address": props.get("Address", ""),
+                    "powered": bool(props.get("Powered")),
+                    "discoverable": bool(props.get("Discoverable")),
+                    "pairable": bool(props.get("Pairable")),
+                    "path": f"/org/bluez/{name}",
+                })
+        finally:
+            with contextlib.suppress(Exception):
+                bus.disconnect()
+        return out
+
+    result: list[dict] = []
+    err: str = ""
+
+    def run() -> None:
+        nonlocal result, err
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                asyncio.wait_for(probe(), timeout=BLUEZ_BUS_TIMEOUT))
+        except Exception as e:  # noqa: BLE001 — bus timeout / auth / protocol
+            err = f"{type(e).__name__}: {e}"[:120]
+        finally:
+            loop.close()
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(timeout=BLUEZ_BUS_TIMEOUT + 2)
+    if t.is_alive():  # wedged bus — don't hold the endpoint hostage
+        err = err or "bluez D-Bus probe wedged (timed out)"
+    return result
+
+
 def bt_adapters() -> list[dict]:
-    """Bluetooth adapters from the kernel's sysfs view (/sys/class/bluetooth,
-    one dir per adapter, hci0-style names — no D-Bus, no root). Returns []
-    when the box has no adapter or no kernel support (e.g. this dev box, or
-    a VM, or a uConsole whose bluetooth service is down / firmware not
-    loaded — see bt_diagnostics). The scan itself goes through
-    bleak/BlueZ; if BlueZ is missing the scan reports the error, which the
-    UI turns into INSTALL BLUETOOTH."""
-    out: list[dict] = []
+    """Bluetooth adapters, primary source BlueZ over D-Bus (see
+    _adapters_from_bluez — the uConsole's kernel 6.12 never creates the
+    sysfs attribute files, so the sysfs view alone reports "no adapter"
+    on a perfectly working radio), fallback the kernel's sysfs view
+    (/sys/class/bluetooth, one dir per adapter, hci0-style names — no
+    D-Bus, no root). Returns [] only when BOTH sources are empty —
+    e.g. this dev box, a VM, or a genuinely absent radio (see
+    bt_diagnostics). The scan itself goes through bleak/BlueZ; if BlueZ
+    is missing the scan reports the error, which the UI turns into
+    INSTALL BLUETOOTH."""
+    out = _adapters_from_bluez()
+    if out:
+        return out
     try:
         for d in sorted(Path("/sys/class/bluetooth").iterdir()):
             try:
@@ -273,8 +364,19 @@ def bt_diagnostics() -> dict:
         there — "Failed to load bluetooth firmware" is the classic)
     Hints are actionable, in priority order."""
     adapters = bt_adapters()
-    drv = Path("/sys/bus/usb/drivers/btusb")
-    hci_drv_registered = drv.exists()
+    # hci driver registered? Two distinct radio classes:
+    #  - USB dongles:  /sys/bus/usb/drivers/btusb
+    #  - SoC/UART (the uConsole's BCM4345C0): hci_uart/btbcm kernel modules,
+    #    no USB device at all — btusb is ABSENT and always was; probing it
+    #    alone made every uConsole read "NOT registered" (M26.3 bug)
+    hci_drv_registered = Path("/sys/bus/usb/drivers/btusb").exists()
+    mods_path = Path("/proc/modules")
+    try:
+        mods = {ln.split()[0] for ln in mods_path.read_text().splitlines()}
+    except OSError:
+        mods = set()
+    hci_soc_registered = {"bluetooth", "hci_uart"} <= mods
+    hci_drv_registered = hci_drv_registered or hci_soc_registered
     rfkill = _run_user(["rfkill"]).stdout.strip()
     svc = _run_user(["systemctl", "is-active", "bluetooth"]).stdout.strip()
     dmesg = _run_user(["dmesg"]).stdout
@@ -285,6 +387,10 @@ def bt_diagnostics() -> dict:
         hints.append("no hci adapter in the kernel — check the dmesg lines "
                      "below (firmware load failures land there); a reboot "
                      "often recovers it")
+    elif not adapters and hci_drv_registered and svc in ("active", "running"):
+        hints.append("the kernel + bluetooth service are up but no adapter "
+                     "is answering — try RESTART BLUETOOTH below, then "
+                     "REFRESH (hci0 can take a few seconds after boot)")
     for a in adapters:
         if not a["powered"]:
             hints.append(f"adapter {a['name']} is powered off — use "
