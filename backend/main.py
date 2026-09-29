@@ -22,6 +22,7 @@ import settings
 import system
 from net import gather_net
 from scanner import scanner
+from wifiscan import wifi, wireless_adapters, iwlist_installed, probe_scan
 from sudo import SudoRequired, sudo
 
 BASE = Path(__file__).resolve().parent
@@ -159,7 +160,7 @@ def _nmap_version(path: str | None) -> str:
 @app.post("/api/tools/install")
 def tools_install(payload: dict) -> dict:
     tool = (payload or {}).get("tool", "")
-    if tool not in ("nmap", "openvpn"):
+    if tool not in ("nmap", "openvpn", "wireless-tools"):
         raise HTTPException(400, "unknown tool")
     try:
         p = sudo.run("apt-get", "install", "-y", tool, timeout=900)
@@ -332,6 +333,58 @@ def scan_start(payload: dict) -> dict:
 @app.post("/api/scan/jobs/{job_id}/cancel")
 def scan_cancel(job_id: str) -> dict:
     return {"ok": scanner.cancel(job_id)}
+
+
+# ── wifi scan ───────────────────────────────────────────────────
+
+@app.get("/api/wifi/adapters")
+def wifi_adapters() -> dict:
+    return {
+        "adapters": wireless_adapters(),
+        "iwlist": iwlist_installed(),
+    }
+
+
+@app.get("/api/wifi/status")
+def wifi_status() -> dict:
+    return wifi.public()
+
+
+@app.post("/api/wifi/scan/start")
+def wifi_scan_start(payload: dict) -> dict:
+    iface = (payload or {}).get("interface", "")
+    if not iface:
+        raise HTTPException(400, "missing interface")
+    if not iwlist_installed():
+        raise HTTPException(
+            400, "iwlist is not installed — use the INSTALL WIRELESS-TOOLS "
+                 "button on the WIFI screen")
+    # probe once before starting the loop: a missing password or a broken
+    # adapter should surface immediately, not after the first 5s refresh
+    try:
+        res = probe_scan(iface)
+    except SudoRequired:
+        raise HTTPException(401, "sudo password required")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if res["cells"] is None:
+        raise HTTPException(400, res["error"])
+    try:
+        return wifi.start(iface, res["cells"])
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/wifi/scan/stop")
+def wifi_scan_stop() -> dict:
+    return wifi.stop()
+
+
+@app.delete("/api/wifi/scan")
+def wifi_scan_reset() -> dict:
+    """Test hook: stop and clear the session."""
+    wifi.reset()
+    return {"ok": True}
 
 
 @app.websocket("/ws/scan/{job_id}")

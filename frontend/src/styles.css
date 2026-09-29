@@ -9,6 +9,7 @@
   --green: #3dff9e;
   --amber: #ffc247;
   --red: #ff3b5c;
+  --violet: #a35eff;
   --text: #d7e6ff;
   --soft: #9db2d8; /* readable secondary text — brighter than --dim */
   --dim: #5b6b8c;
@@ -169,6 +170,7 @@ html, body {
 .tile[data-accent="magenta"] { color: var(--magenta); text-shadow: 0 0 8px rgba(255, 46, 196, 0.5); }
 .tile[data-accent="amber"] { color: var(--amber); text-shadow: 0 0 8px rgba(255, 194, 71, 0.5); }
 .tile[data-accent="cyan"] { color: var(--cyan); text-shadow: 0 0 8px rgba(0, 245, 255, 0.5); }
+.tile[data-accent="violet"] { color: var(--violet); text-shadow: 0 0 8px rgba(163, 94, 255, 0.5); }
 /* when a tool is selected, the unselected tiles drop to a dimmed white
    so the active one stands out — but ONLY while focus is inside the tool.
    As soon as focus returns to the tile row (Esc/Backspace), the neon
@@ -204,6 +206,11 @@ html, body {
   box-shadow: 0 0 18px rgba(255, 59, 92, 0.35), inset 0 0 24px rgba(255, 59, 92, 0.08);
   color: var(--red); text-shadow: 0 0 10px rgba(255, 59, 92, 0.9);
 }
+.tile[data-accent="violet"].active {
+  border-color: var(--violet);
+  box-shadow: 0 0 18px rgba(163, 94, 255, 0.35), inset 0 0 24px rgba(163, 94, 255, 0.08);
+  color: var(--violet); text-shadow: 0 0 10px rgba(163, 94, 255, 0.9);
+}
 /* keyboard focus — dashed outline, clearly distinct from the accent glow
    of the *selected* tool */
 .tile:focus-visible,
@@ -216,6 +223,7 @@ html, body {
 .scan-host-card:focus-visible,
 .scan-host:focus-visible,
 .host-port:focus-visible,
+.wifi-cell:focus-visible,
 .select-input:focus-visible,
 .check-input:focus-visible {
   outline: 3px dashed rgba(255, 255, 255, 0.9);
@@ -840,6 +848,55 @@ html, body {
   border-radius: 6px;
   padding: 0.6em 0.8em;
 }
+
+/* ── wifi scan screen (M25) ──────────────────────────────────── */
+.wifi-root { display: flex; flex-direction: column; height: 100%; }
+.wifi-content { display: flex; flex-direction: column; gap: 0.8em; height: 100%; }
+.wifi-target {
+  font-family: var(--font-display);
+  font-size: 1.7em; font-weight: 700;
+  color: var(--violet); text-shadow: 0 0 10px rgba(163, 94, 255, 0.5);
+}
+/* band -> channel group header: the grouping axis Martin asked for */
+.wifi-group {
+  font-family: var(--font-display);
+  font-size: 1.15em; font-weight: 700; letter-spacing: 0.14em;
+  color: var(--violet);
+  border-bottom: 1px solid rgba(163, 94, 255, 0.35);
+  padding: 0.3em 0.2em;
+  margin-top: 0.4em;
+}
+.wifi-group b { text-shadow: 0 0 8px rgba(163, 94, 255, 0.6); }
+.wifi-cell {
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  padding: 0.6em 1em;
+  display: flex; flex-direction: column; gap: 0.3em;
+}
+.wifi-cell-head { display: flex; align-items: baseline; gap: 1em; flex-wrap: wrap; }
+.wifi-ssid {
+  font-family: var(--font-display);
+  font-size: 1.35em; font-weight: 700;
+}
+.wifi-ssid-hidden { color: var(--dim); font-weight: 500; font-style: italic; }
+.wifi-lock {
+  font-family: var(--font-display);
+  font-size: 0.9em; font-weight: 700; letter-spacing: 0.14em;
+  color: var(--amber);
+}
+.wifi-lock.open { color: var(--green); }
+.wifi-mode {
+  font-family: var(--font-display);
+  font-size: 0.8em; font-weight: 600; letter-spacing: 0.2em;
+  color: var(--dim);
+}
+.wifi-cell-meta {
+  font-family: monospace;
+  font-size: 1em; line-height: 1.5;
+  color: var(--soft);
+}
+.wifi-cell-meta b { color: var(--text); }
 
 /* ── idle overlay (M4) ── */
 .overlay {

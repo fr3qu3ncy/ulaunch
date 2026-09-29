@@ -9,16 +9,18 @@ import {
   type Preset, type VpnStatus,
 } from './api'
 import { mountScan, type ScanHandle } from './scan'
+import { mountWifi, type WifiHandle } from './wifi'
 import * as overlay from './overlay'
 import { askSudo, type SudoOpts } from './sudo'
 import { askVpnCreds } from './vpnCreds'
 
-type Screen = 'network' | 'about' | 'vpn' | 'scan' | 'system' | 'settings'
+type Screen = 'network' | 'about' | 'vpn' | 'scan' | 'wifi' | 'system' | 'settings'
 
 const TILES: { id: Screen; label: string; ico: string; accent: string }[] = [
   { id: 'network', label: 'NETWORK', ico: '⌗', accent: 'cyan' },
   { id: 'vpn', label: 'VPN', ico: '⛨', accent: 'green' },
   { id: 'scan', label: 'SCAN', ico: '⌖', accent: 'magenta' },
+  { id: 'wifi', label: 'WIFI', ico: '📡', accent: 'violet' },
   { id: 'system', label: 'SYSTEM', ico: '⏻', accent: 'amber' },
   { id: 'settings', label: 'SETTINGS', ico: '⚙', accent: '' },
 ]
@@ -35,6 +37,7 @@ let vpnActive: VpnStatus | null = null
 let vpnOpenvpnInstalled: boolean | null = null
 let vpnLogTimer: number | null = null
 let scanHandle: ScanHandle | null = null
+let wifiHandle: WifiHandle | null = null
 
 /* ───────────────────────── helpers ───────────────────────── */
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -754,6 +757,11 @@ function render() {
     app.appendChild(holder)
     scanHandle = mountScan(holder)
   }
+  else if (screen === 'wifi') {
+    const holder = el('div', 'content scan-holder')
+    app.appendChild(holder)
+    wifiHandle = mountWifi(holder)
+  }
   else if (screen === 'system') app.appendChild(systemContent())
   else app.appendChild(settingsContent())
   app.appendChild(footer())
@@ -846,6 +854,7 @@ async function go(s: Screen) {
   const prev = screen
   screen = s
   if (prev === 'scan') { scanHandle?.destroy(); scanHandle = null }
+  if (prev === 'wifi') { wifiHandle?.destroy(); wifiHandle = null }
   render()
   if (s === 'vpn') { await refreshVpn(); startLogPoll() }
   if (prev === 'vpn') stopLogPoll()
@@ -1221,6 +1230,22 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
     return
   }
 
+  /* wifi results (M25): ↑/↓ walk the cell list the same way — a few lines
+     per press while a cell overflows the pane (group headers add height),
+     jump between cells once fully visible. Past the LAST cell ↓ → the
+     SCAN AGAIN / STOP SCAN action button below the list. */
+  if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') &&
+      t && t.classList.contains('wifi-cell')) {
+    e.preventDefault()
+    const cellList = Array.from(content?.querySelectorAll<HTMLElement>('.wifi-cell') ?? [])
+    /* ~2 cells of height per press */
+    const line = () => Math.max(24, Math.round(
+      ((content?.querySelector('.wifi-cell') as HTMLElement | null)?.offsetHeight || 56) * 2))
+    if (listArrow(dir, t, cellList, content, line)) return
+    if (dir === 1) content?.querySelector<HTMLElement>('[data-fk="wifi:action-bottom"]')?.focus()
+    return
+  }
+
   /* <select> (settings idle timeout): ←/→ change the value natively,
      ↑/↓ navigate to the next/previous control. (While the native
      dropdown popup is open, keys go to the popup, not here.) */
@@ -1296,7 +1321,8 @@ async function refresh() {
     const net = await fetchNet()
     const first = !lastNet
     lastNet = net
-    if (screen === 'vpn' || screen === 'scan' || screen === 'system' || screen === 'settings') {
+    if (screen === 'vpn' || screen === 'scan' || screen === 'wifi'
+        || screen === 'system' || screen === 'settings') {
       /* update only the items that need it — the live header stats. VPN
          and SCAN update their own content (log poller / WebSocket), and
          SYSTEM and SETTINGS are static once loaded (power buttons never
