@@ -59,3 +59,17 @@ with mock.patch.object(type(sysfs), "iterdir", return_value=[base / "hci0", base
     print(f"PASS  bt_adapters: {[(a['name'], a['powered']) for a in out]}")
 
 print("\nALL POWERED-STATE TESTS PASS")
+
+# M26.4 regression: bleak 3.x passive scanning REQUIRES bluez or_patterns
+# (the constructor raises). We scan ACTIVE — that constructor must stay
+# buildable, and the passive-without-or_patterns failure mode must remain
+# loud (this is what made a scan sit 'running' with 0 devices, no error).
+from bleak import BleakScanner  # noqa: E402
+from bleak.exc import BleakError  # noqa: E402
+try:
+    BleakScanner(scanning_mode="passive")
+    raise SystemExit("BUG: passive without or_patterns must raise (bleak 3.x)")
+except BleakError as e:
+    assert "or_patterns" in str(e)
+BleakScanner(scanning_mode="active", bluez={"adapter": "hci0"})
+print("PASS  active scan ctor OK; passive-without-or_patterns raises (M26.4)")

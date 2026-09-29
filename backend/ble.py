@@ -133,9 +133,15 @@ class BleSession:
         """Start the scanner, let it run until stopped. The scanner is
         started INSIDE the thread's event loop — creating a BleakScanner
         on one loop and starting it on another is how the DBus transport
-        gets a dead connection."""
+        gets a dead connection. Active mode: passive mode on bleak 3.x
+        REQUIRES bluez or_patterns (raising in the constructor — M26.4
+        bug: we passed none, the ctor blew up inside the thread, the
+        session stayed 'running' with 0 devices and no error). Active is
+        what bluetoothctl 'scan on' does — it sees every device, which is
+        what a launcher's scanner should too; BLE devices re-advertise
+        continuously and the extra probe packets are harmless."""
         from bleak import BleakScanner
-        kwargs: dict = {"scanning_mode": "passive"}
+        kwargs: dict = {"scanning_mode": "active"}
         if adapter:
             # 3.0: `bluez={"adapter": name}`; 2.x: `bluez=adapter`
             try:
@@ -144,8 +150,13 @@ class BleSession:
                 kwargs["bluez"] = adapter
             else:
                 kwargs["bluez"] = {"adapter": adapter}
-        scanner = BleakScanner(**kwargs)
+        # The CONSTRUCTOR is inside the try on purpose (M26.4): on bleak 3.x
+        # a misconfigured scanner raises in the ctor (e.g. passive without
+        # or_patterns). Outside the try, that killed the thread with the
+        # session already marked 'running' -> "running, 0 devices, no
+        # error" forever.
         try:
+            scanner = BleakScanner(**kwargs)
             await scanner.start()
         except Exception as e:  # noqa: BLE001 — any backend/DBus failure
             with self._lock:
