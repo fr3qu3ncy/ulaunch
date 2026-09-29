@@ -502,7 +502,22 @@ async def scan_ws(ws: WebSocket, job_id: str):
 
 if STATIC.exists():
     (STATIC / "assets").mkdir(exist_ok=True)
-    app.mount("/assets", StaticFiles(directory=STATIC / "assets"), name="assets")
+
+    class _Assets(StaticFiles):
+        """Content-hashed files (index-<hash>.js/css) never change —
+        cache them aggressively. index.html gets no-cache instead, so
+        the kiosk browser always re-fetches it and picks up the new
+        hashed bundle after an update (without this, Chromium's
+        heuristic freshness can serve a stale index.html that still
+        points at the old bundle — the "pulled the latest, still see
+        the old UI" trap)."""
+
+        def file_response(self, full_path, stat_result, scope, status_code=200):
+            resp = super().file_response(full_path, stat_result, scope, status_code)
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return resp
+
+    app.mount("/assets", _Assets(directory=STATIC / "assets"), name="assets")
 
     @app.get("/{path:path}")
     def spa(path: str):
@@ -511,8 +526,10 @@ if STATIC.exists():
         candidate = (STATIC / path).resolve()
         if path and candidate.exists() and candidate.is_file() \
                 and str(candidate).startswith(str(STATIC.resolve())):
-            return FileResponse(candidate)
-        return FileResponse(STATIC / "index.html")
+            return FileResponse(candidate,
+                                headers={"Cache-Control": "no-cache"})
+        return FileResponse(STATIC / "index.html",
+                            headers={"Cache-Control": "no-cache"})
 
 
 if __name__ == "__main__":

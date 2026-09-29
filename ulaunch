@@ -24,6 +24,18 @@ fi
 # clear stale pid files
 rm -f "$RUN_DIR/server.pid" "$RUN_DIR/browser.pid"
 
+# REFUSE to start against a stale server. If a previous session died
+# hard (power button, crash) its server can still hold port 8317 — the
+# new server would die on "address in use" (silent, it's a background
+# job) and the kiosk would end up on the OLD code with a NEW browser.
+# That is the "pulled the latest but still see the old UI" trap.
+if curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
+  echo "✗ port $PORT is already serving ulaunch (stale instance from a"
+  echo "  previous session?). Kill it, then re-run ./ulaunch:"
+  echo "      fuser -k $PORT/tcp      # or: pkill -f 'python backend/main.py'"
+  exit 1
+fi
+
 # 1. backend server
 ULAUNCH_PORT="$PORT" ULAUNCH_RUN_DIR="$RUN_DIR" \
   ./.venv/bin/python backend/main.py &
