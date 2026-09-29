@@ -35,7 +35,7 @@ fi
 
 # 3. system tool probe (warn only — the app offers in-app install at runtime)
 echo "▸ system tools"
-for tool in nmap openvpn ip nmcli curl; do
+for tool in nmap openvpn ip nmcli curl bluetoothctl; do
   if command -v "$tool" >/dev/null 2>&1; then
     echo "  ✓ $tool"
   else

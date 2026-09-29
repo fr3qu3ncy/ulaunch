@@ -8,7 +8,18 @@ export interface BleAdapter {
   name: string
   address: string
   powered: boolean
+  discoverable?: boolean | null
+  pairable?: boolean | null
   path: string
+}
+
+export interface BleDiagnostics {
+  adapters: BleAdapter[]
+  hci_drv_registered: boolean
+  rfkill: string[]
+  service: string
+  dmesg: string[]
+  hints: string[]
 }
 
 export interface BleDevice {
@@ -71,6 +82,7 @@ export function mountBle(container: HTMLElement): BleHandle {
   let destroyed = false
   let phase: 'pick' | 'results' = 'pick'
   let adapters: BleAdapter[] = []
+  let diag: BleDiagnostics | null = null
   let selIndex = 0
   let bluezOk: boolean | null = null
   let status: BleStatus = {
@@ -191,6 +203,65 @@ export function mountBle(container: HTMLElement): BleHandle {
     }
   }
 
+  /* Refresh the adapter list + diagnostics (the no-adapters view's
+     REFRESH button, and the entry point when bluez looks fine but
+     nothing is listed). */
+  async function refreshAdapters() {
+    try {
+      const a = await getJSON<{ adapters: BleAdapter[]; bluez: { installed: boolean; running: boolean } }>('/api/ble/adapters')
+      adapters = a.adapters
+      bluezOk = a.bluez.installed
+      const onIdx = adapters.findIndex(x => x.powered)
+      if (onIdx >= 0) selIndex = onIdx
+      diag = adapters.length ? null : await getJSON<BleDiagnostics>('/api/ble/diagnostics')
+    } catch { /* keep last state */ }
+    if (phase === 'pick') render()
+  }
+
+  async function powerOnAdapter(name: string, btn: HTMLButtonElement) {
+    const label = btn.textContent
+    btn.disabled = true; btn.textContent = 'powering on…'
+    try {
+      const r = await fetch('/api/ble/power', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, on: true }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (!r.ok) { alert(body.detail || `power on failed (${r.status})`) }
+    } catch (e: any) { alert(String(e.message || e)) }
+    btn.disabled = false; btn.textContent = label
+    void refreshAdapters()
+  }
+
+  /* Restart the bluetooth service (the RESTART BLUETOOTH button on the
+     diagnostics view). On 401 pop the in-app sudo modal and retry. */
+  async function restartBt(btn: HTMLButtonElement) {
+    const label = btn.textContent
+    btn.disabled = true; btn.textContent = 'restarting…'
+    const restore = () => { btn.disabled = false; btn.textContent = label }
+    for (;;) {
+      let r: Response
+      try {
+        r = await fetch('/api/ble/restart', { method: 'POST' })
+      } catch (e: any) { restore(); alert(String(e.message || e)); return }
+      if (r.status === 401) {
+        if (!(await askSudo({
+          sub: 'Enter your sudo password to restart the bluetooth service.',
+        }))) { restore(); return }
+        continue
+      }
+      if (!r.ok) {
+        const detail = (await r.json().catch(() => ({}))).detail
+          || `restart failed (${r.status})`
+        restore(); alert(detail); return
+      }
+      restore()
+      void refreshAdapters()
+      return
+    }
+  }
+
   function actionButton(fk: string): HTMLButtonElement {
     const running = status.status === 'running'
     const b = el('button', `btn ${running ? 'danger' : 'active'}`,
@@ -217,11 +288,11 @@ export function mountBle(container: HTMLElement): BleHandle {
 
     root.innerHTML = ''
     const c = el('div', 'ble-content')
-    c.appendChild(el('div', 'section-title', 'SELECT ADAPTER'))
+    c.appendChild(el('div', 'section-title',
+      adapters.length ? 'SELECT ADAPTER' : 'BLUETOOTH ADAPTER'))
 
     if (adapters.length === 0) {
-      c.appendChild(el('div', 'empty',
-        'no bluetooth adapters found — check `hciconfig` for an hci* adapter'))
+      c.appendChild(renderNoAdapters())
     } else {
       const list = el('div', 'scan-opt-list')
       adapters.forEach((a, i) => {
@@ -233,9 +304,23 @@ export function mountBle(container: HTMLElement): BleHandle {
           `<span class="dot ${a.powered ? 'on' : 'warn'}"></span><b>${esc(a.name)}</b>`
         b.appendChild(head)
         b.appendChild(el('span', 'scan-opt-sub',
-          a.address || (a.powered ? 'powered on' : 'powered off')))
+          a.address + (a.powered ? ' · powered on' : ' · POWERED OFF')))
         b.addEventListener('click', () => { selIndex = i; render() })
         list.appendChild(b)
+
+        /* an adapter that's present but off is one tap from working —
+           put POWER ON right on the row so the user doesn't have to
+           leave the list (bluetoothctl, no root) */
+        if (!a.powered) {
+          const pw = el('button', 'btn small', `POWER ON ${a.name}`)
+          pw.tabIndex = 0
+          pw.dataset.fk = `blepower:${i}`
+          pw.addEventListener('click', (e) => {
+            e.stopPropagation()
+            void powerOnAdapter(a.name, pw)
+          })
+          list.appendChild(pw)
+        }
       })
       c.appendChild(list)
     }
@@ -259,8 +344,10 @@ export function mountBle(container: HTMLElement): BleHandle {
       const start = el('button', 'btn active big', '▶ START SCAN')
       start.tabIndex = 0
       start.dataset.fk = 'blestart'
-      if (bluezOk === false) {
-        start.disabled = true; start.title = 'install bluez first'
+      if (bluezOk === false || !adapters[selIndex]?.powered) {
+        start.disabled = true
+        start.title = bluezOk === false ? 'install bluez first'
+          : 'power on the adapter first'
       }
       start.addEventListener('click', startScan)
       row.appendChild(start)
@@ -273,9 +360,64 @@ export function mountBle(container: HTMLElement): BleHandle {
       if (prev && !(prev as HTMLButtonElement).disabled) { prev.focus(); return }
     }
     const ae2 = document.activeElement as HTMLElement | null
-    if (adapters.length > 0 && (!ae2 || !root.contains(ae2))) {
+    if (!ae2 || !root.contains(ae2)) {
       root.querySelector<HTMLElement>('.ble-opt, .btn, [tabindex="0"]')?.focus()
     }
+  }
+
+  /* The "no adapters" view: the kernel isn't exposing the BT radio.
+     Instead of a dead-end message, show what we can see (service,
+     rfkill, dmesg tail), the actionable hints, and the recovery
+     controls — RESTART BLUETOOTH (sudo) + REFRESH. */
+  function renderNoAdapters(): HTMLElement {
+    const box = el('div', 'ble-noad')
+    box.appendChild(el('div', 'empty ble-noad-title',
+      'no bluetooth adapter found in the kernel'))
+
+    const d = diag
+    if (d) {
+      if (d.hints.length) {
+        const hints = el('div', 'ble-hints')
+        d.hints.forEach(h => hints.appendChild(el('div', 'ble-hint', '• ' + h)))
+        box.appendChild(hints)
+      }
+      const facts = el('div', 'ble-facts')
+      const fact = (k: string, v: string) => {
+        const r = el('div', 'ble-fact')
+        r.appendChild(el('span', 'ble-fact-k', k))
+        r.appendChild(el('span', 'ble-fact-v', v))
+        return r
+      }
+      facts.appendChild(fact('adapter in kernel',
+        d.hci_drv_registered ? 'driver registered' : 'NOT registered'))
+      facts.appendChild(fact('bluetooth service',
+        d.service === 'active' ? 'active' : d.service))
+      if (d.rfkill.length) facts.appendChild(fact('rfkill', d.rfkill.join(' ')))
+      box.appendChild(facts)
+      if (d.dmesg.length) {
+        const dm = el('div', 'ble-dmesg')
+        d.dmesg.forEach(ln => dm.appendChild(el('div', 'ble-dmesg-line', ln)))
+        box.appendChild(dm)
+      }
+    } else {
+      box.appendChild(el('div', 'empty',
+        'checking the bluetooth stack…'))
+    }
+
+    const row = el('div', 'btn-row')
+    const restart = el('button', 'btn active', '⟳ RESTART BLUETOOTH')
+    restart.tabIndex = 0
+    restart.dataset.fk = 'blerestart'
+    restart.title = 're-runs the bluetooth service (asks for your password)'
+    restart.addEventListener('click', () => restartBt(restart))
+    row.appendChild(restart)
+    const refresh = el('button', 'btn', '↻ REFRESH')
+    refresh.tabIndex = 0
+    refresh.dataset.fk = 'bleresync'
+    refresh.addEventListener('click', () => void refreshAdapters())
+    row.appendChild(refresh)
+    box.appendChild(row)
+    return box
   }
 
   function renderResults() {
@@ -407,7 +549,10 @@ export function mountBle(container: HTMLElement): BleHandle {
   }
 
   /* initial data: adapters + bluez availability, and whether a session is
-     already live (a tool switch must restore the live view) */
+     already live (a tool switch must restore the live view). When the
+     adapter list is empty we ALSO fetch the diagnostics so the
+     no-adapters view can show real facts + hints immediately (not
+     "checking the bluetooth stack…" forever). */
   getJSON<{ adapters: BleAdapter[]; bluez: { installed: boolean; running: boolean } }>(
     '/api/ble/adapters')
     .then(a => {
@@ -416,7 +561,17 @@ export function mountBle(container: HTMLElement): BleHandle {
       bluezOk = a.bluez.installed
       const onIdx = adapters.findIndex(x => x.powered)
       if (onIdx >= 0) selIndex = onIdx
-      if (phase === 'pick') render()
+      const finish = (d: BleDiagnostics | null) => {
+        diag = adapters.length ? null : d
+        if (phase === 'pick') render()
+      }
+      if (adapters.length === 0) {
+        getJSON<BleDiagnostics>('/api/ble/diagnostics')
+          .then(finish)
+          .catch(() => finish(null))
+      } else {
+        finish(null)
+      }
     })
     .catch(() => { if (phase === 'pick') render() })
 

@@ -23,7 +23,8 @@ import system
 from net import gather_net
 from scanner import scanner
 from wifiscan import wifi, wireless_adapters, iwlist_installed, probe_scan
-from ble import ble, bt_adapters, bluetooth_available
+from ble import (ble, bt_adapters, bluetooth_available, bt_diagnostics,
+                 restart_bluetooth, power_adapter)
 from sudo import SudoRequired, sudo
 
 BASE = Path(__file__).resolve().parent
@@ -399,6 +400,41 @@ def ble_adapters() -> dict:
     }
 
 
+@app.get("/api/ble/diagnostics")
+def ble_diagnostics() -> dict:
+    """Plain-user BT stack probe for the 'no adapters' screen: sysfs,
+    rfkill, service state, dmesg tail, actionable hints."""
+    return bt_diagnostics()
+
+
+@app.post("/api/ble/restart")
+def ble_restart() -> dict:
+    """Restart the bluetooth service (sudo — 401 pops the in-app modal).
+    The recovery path for a uConsole whose BT service is down or whose
+    firmware failed to load at boot."""
+    from sudo import SudoRequired
+    try:
+        return restart_bluetooth()
+    except SudoRequired:
+        raise HTTPException(401, "sudo password required")
+    except ValueError as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/api/ble/power")
+def ble_power(payload: dict) -> dict:
+    """Power an adapter on/off (bluetoothctl — no root, the uConsole user
+    is in the bluetooth group)."""
+    name = (payload or {}).get("name", "")
+    on = bool((payload or {}).get("on", True))
+    if not name:
+        raise HTTPException(400, "missing adapter name")
+    try:
+        return power_adapter(name, on)
+    except ValueError as e:
+        raise HTTPException(500, str(e))
+
+
 @app.get("/api/ble/status")
 def ble_status() -> dict:
     return ble.public()
@@ -413,6 +449,8 @@ def ble_scan_start(payload: dict) -> dict:
         raise HTTPException(
             400, "bluez bluetooth daemon is not installed — use the "
                  "INSTALL BLUETOOTH button on the BT screen")
+    # an explicit adapter must exist; with none, bleak picks the default
+    # (single-adapter boxes are the norm)
     if adapter and not any(a["name"] == adapter for a in bt_adapters()):
         raise HTTPException(400, f"unknown bluetooth adapter: {adapter}")
     return ble.start(adapter)

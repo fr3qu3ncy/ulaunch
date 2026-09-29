@@ -15,6 +15,9 @@ consumer devices.
 """
 import asyncio
 import json
+import re
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -177,9 +180,13 @@ class BleSession:
                     "is the bluez package installed and bluetooth "
                     "running? (INSTALL BLUETOOTH on this screen, then "
                     "SCAN AGAIN)")
-        if "not powered on" in low or "powered off" in low or "controller" in low:
-            return (f"no bluetooth adapter available ({msg} — "
-                    "check the adapter is powered on)")
+        if ("not powered on" in low or "powered off" in low
+                or "no suitable adapter" in low or "controller" in low
+                or "adapter" in low):
+            return (f"no usable bluetooth adapter ({msg[:180]} — the "
+                    "adapter may be powered off or rfkill-blocked; use "
+                    "the BT screen's POWER ON / RESTART BLUETOOTH "
+                    "controls, then SCAN AGAIN)")
         return msg[:300]
 
     # ── view ───────────────────────────────────────────────────
@@ -198,13 +205,44 @@ ble = BleSession()
 
 
 # ── adapters ───────────────────────────────────────────────────
+def _run_user(argv: list[str], timeout: int = 5) -> subprocess.CompletedProcess:
+    """Run a plain-user command (no sudo) — rfkill, systemctl is-active.
+    These work as the uConsole user without root."""
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return subprocess.CompletedProcess(argv, 127, "", "")
+
+
+def _adapter_state(d: Path) -> dict:
+    """Power/pairable state from sysfs. NOTE: `powered` must come from the
+    `power` file (0/1) — `discoverable` is a separate mode and was the
+    original M26 bug: an adapter that's ON but not discoverable read as
+    "powered off"."""
+    def _flag(name: str) -> bool | None:
+        try:
+            v = int((d / name).read_text().strip() or 0)
+        except (OSError, ValueError):
+            return None
+        return v == 1
+    powered = _flag("power")
+    if powered is None:  # sysfs file unreadable — fall back to discoverable
+        powered = _flag("discoverable")
+    return {
+        "powered": bool(powered),
+        "discoverable": _flag("discoverable"),
+        "pairable": _flag("pairable"),
+    }
+
+
 def bt_adapters() -> list[dict]:
     """Bluetooth adapters from the kernel's sysfs view (/sys/class/bluetooth,
     one dir per adapter, hci0-style names — no D-Bus, no root). Returns []
     when the box has no adapter or no kernel support (e.g. this dev box, or
-    a VM). The scan itself goes through bleak/BlueZ; if BlueZ is missing the
-    scan will report the error, which the UI turns into INSTALL BLUETOOTH.
-    """
+    a VM, or a uConsole whose bluetooth service is down / firmware not
+    loaded — see bt_diagnostics). The scan itself goes through
+    bleak/BlueZ; if BlueZ is missing the scan reports the error, which the
+    UI turns into INSTALL BLUETOOTH."""
     out: list[dict] = []
     try:
         for d in sorted(Path("/sys/class/bluetooth").iterdir()):
@@ -212,15 +250,10 @@ def bt_adapters() -> list[dict]:
                 addr = (d / "address").read_text().strip()
             except OSError:
                 continue
-            powered = False
-            try:
-                powered = int((d / "discoverable").read_text().strip() or 0) == 1
-            except (OSError, ValueError):
-                pass
             out.append({
                 "name": d.name,
                 "address": addr,
-                "powered": powered,
+                **_adapter_state(d),
                 "path": f"/org/bluez/{d.name}",
             })
     except OSError:
@@ -228,13 +261,93 @@ def bt_adapters() -> list[dict]:
     return out
 
 
+def bt_diagnostics() -> dict:
+    """What the kernel + userspace say about the BT stack, for the
+    "no adapters" screen on the pick view. All plain-user probes — the
+    uConsole user runs this with no root:
+      - hci driver registered? (driver in /sys/bus)
+      - adapter sysfs entries (bt_adapters)
+      - rfkill soft/hard blocks
+      - bluetooth systemd service state
+      - last bluez/hci lines from dmesg (firmware load failures show up
+        there — "Failed to load bluetooth firmware" is the classic)
+    Hints are actionable, in priority order."""
+    adapters = bt_adapters()
+    drv = Path("/sys/bus/usb/drivers/btusb")
+    hci_drv_registered = drv.exists()
+    rfkill = _run_user(["rfkill"]).stdout.strip()
+    svc = _run_user(["systemctl", "is-active", "bluetooth"]).stdout.strip()
+    dmesg = _run_user(["dmesg"]).stdout
+    bt_lines = [ln.strip() for ln in dmesg.splitlines()
+                if re.search(r"blue|hci|btusb|firmware.*bluetooth", ln, re.I)][-10:]
+    hints: list[str] = []
+    if not adapters and not hci_drv_registered:
+        hints.append("no hci adapter in the kernel — check the dmesg lines "
+                     "below (firmware load failures land there); a reboot "
+                     "often recovers it")
+    for a in adapters:
+        if not a["powered"]:
+            hints.append(f"adapter {a['name']} is powered off — use "
+                         f"POWER ON {a['name']} below")
+    if re.search(r"Soft blocked|soft blocked", rfkill, re.I):
+        hints.append("an rfkill SOFT block is on — unblock with: "
+                     "sudo rfkill unblock bluetooth")
+    if re.search(r"Hard blocked|hard blocked", rfkill, re.I):
+        hints.append("an rfkill HARD block is on (hardware kill switch) — "
+                     "toggle the physical switch")
+    if svc and svc not in ("active", "running"):
+        hints.append("the bluetooth service is not active — RESTART "
+                     "BLUETOOTH below (needs your password)")
+    return {
+        "adapters": adapters,
+        "hci_drv_registered": hci_drv_registered,
+        "rfkill": rfkill.splitlines(),
+        "service": svc or "unknown",
+        "dmesg": bt_lines,
+        "hints": hints,
+    }
+
+
+def restart_bluetooth() -> dict:
+    """Restart the bluetooth service (sudo) — the recovery for a uConsole
+    whose BT service is down or whose firmware failed to load at boot.
+    Waits up to ~8s for an adapter to appear in sysfs, then re-probes."""
+    from sudo import SudoRequired, sudo
+    try:
+        p = sudo.run("systemctl", "restart", "bluetooth", timeout=60)
+    except SudoRequired:
+        raise
+    if p.returncode != 0:
+        raise ValueError((p.stderr or p.stdout or "systemctl restart bluetooth failed")[-300:])
+    for _ in range(16):
+        if bt_adapters():
+            break
+        time.sleep(0.5)
+    return {
+        "ok": True,
+        "adapters": bt_adapters(),
+        "service": _run_user(["systemctl", "is-active", "bluetooth"]).stdout.strip(),
+    }
+
+
+def power_adapter(name: str, on: bool) -> dict:
+    """Power an adapter on/off. bluetoothctl works for a normal user in the
+    `bluetooth` group (no sudo); if it's not on the PATH, fall back to
+    hciconfig (needs the `bluetooth` group too)."""
+    argv = ["bluetoothctl", "power", "on" if on else "off"]
+    p = _run_user(argv, timeout=15)
+    if p.returncode != 0 and shutil.which("hciconfig"):
+        p = _run_user(["hciconfig", name, "up" if on else "down"], timeout=15)
+    if p.returncode != 0:
+        raise ValueError((p.stderr or p.stdout or "power change failed")[-300:])
+    return {"ok": True, "adapters": bt_adapters()}
+
+
 def bluetooth_available() -> dict:
     """BlueZ presence for /api/tools + the in-app install banner: is the
     bluez package installed (bluetoothd on the PATH) and is the daemon
     running (best-effort systemctl probe; without systemd the binary
     presence counts)?"""
-    import shutil
-    import subprocess
     installed = shutil.which("bluetoothd") is not None
     running = False
     if installed:
