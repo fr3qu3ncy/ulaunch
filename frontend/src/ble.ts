@@ -494,16 +494,24 @@ export function mountBle(container: HTMLElement): BleHandle {
     root.appendChild(c)
 
     /* first results render: pin the pane to the top (heading stays
-       visible) and drop focus on the first cell. Live re-renders skip
-       BOTH — the user may have scrolled down and the focused cell is
-       restored by address in render(). */
+       visible) and drop focus on the first cell — or, when the scan just
+       started and no device has been seen yet, on the TOP STOP SCAN
+       button (a .ble-cell doesn't exist yet, and without this focus
+       falls back to body and the icon bar swallows it). Live re-renders
+       skip BOTH — the user may have scrolled down and the focused cell
+       is restored by address in render(). */
     if (!resultsRendered) {
       resultsRendered = true
       container.scrollTop = 0
       const ae = document.activeElement as HTMLElement | null
       if (!ae || !root.contains(ae)) {
-        root.querySelector<HTMLElement>('.ble-cell')
-          ?.focus({ preventScroll: true })
+        /* first cell when one exists — the TOP button only as the
+           0-devices fallback (a combined CSS selector would pick the top
+           button first, it's earlier in the DOM — that stole focus from
+           the first card). */
+        const first = root.querySelector<HTMLElement>('.ble-cell')
+          || root.querySelector<HTMLElement>('[data-fk="ble:action-top"]')
+        first?.focus({ preventScroll: true })
       }
     }
   }

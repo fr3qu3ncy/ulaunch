@@ -391,16 +391,24 @@ export function mountWifi(container: HTMLElement): WifiHandle {
     root.appendChild(c)
 
     /* first results render: pin the pane to the top (heading stays
-       visible) and drop focus on the first cell. Live re-renders skip
-       BOTH — the user may have scrolled down the list and the focused
-       cell is restored by BSSID in render(). */
+       visible) and drop focus on the first cell — or, when the scan just
+       started and no cell has been seen yet, on the TOP STOP SCAN button
+       (no .wifi-cell exists yet, and without this focus falls back to
+       body and the icon bar swallows it). Live re-renders skip BOTH — the
+       user may have scrolled down the list and the focused cell is
+       restored by BSSID in render(). */
     if (!resultsRendered) {
       resultsRendered = true
       container.scrollTop = 0
       const ae = document.activeElement as HTMLElement | null
       if (!ae || !root.contains(ae)) {
-        root.querySelector<HTMLElement>('.wifi-cell')
-          ?.focus({ preventScroll: true })
+        /* first cell when one exists — the TOP button only as the
+           0-devices fallback (a combined CSS selector would pick the top
+           button first, it's earlier in the DOM — that stole focus from
+           the first card). */
+        const first = root.querySelector<HTMLElement>('.wifi-cell')
+          || root.querySelector<HTMLElement>('[data-fk="wifi:action-top"]')
+        first?.focus({ preventScroll: true })
       }
     }
   }
