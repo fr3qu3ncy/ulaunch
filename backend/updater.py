@@ -120,10 +120,32 @@ def _run_logged(cmd: list[str], cwd: Path, timeout: int = 900) -> int:
     return rc
 
 
+_stale_ref_cleaned = False
+
+
+def _clean_stale_ref() -> None:
+    """Remove the pre-M28.1 stray ref (refs/heads/ulaunch-upstream) that
+    older check-fetches created. It showed up in `git branch` on devices;
+    the ref was later moved outside refs/heads. Best-effort, once per
+    process."""
+    global _stale_ref_cleaned
+    if _stale_ref_cleaned:
+        return
+    _stale_ref_cleaned = True
+    try:
+        subprocess.run(
+            ["git", "-C", str(REPO), "update-ref", "-d",
+             "refs/heads/ulaunch-upstream"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def check_for_update() -> dict:
     """Compare the local VERSION against the upstream on GitHub.
 
-    Runs a ``git fetch <url> main:refs/heads/ulaunch-upstream`` in a
+    Runs a ``git fetch <url> main:<REMOTE_REF>`` in a
     background thread (at most once per FETCH_MIN_INTERVAL) so the endpoint
     answers immediately from the last known state. It fetches the URL into a
     stable LOCAL ref — it never touches the clone's ``origin`` remote, so a
@@ -133,6 +155,7 @@ def check_for_update() -> dict:
     so the update itself shows why in the log).
     """
     global _last_fetch_at
+    _clean_stale_ref()
     now = time.monotonic()
     if not _update_lock.locked() and now - _last_fetch_at >= FETCH_MIN_INTERVAL:
         with _fetch_lock:
@@ -193,11 +216,23 @@ def _fetch_remote(repo: Path, url: str) -> None:
         # the user tracks). This never rewrites the clone's `origin`.
         p = subprocess.run(
             ["git", "-C", str(repo), "fetch", "--force",
-             url, "main:refs/heads/ulaunch-upstream"],
+             url, f"main:{REMOTE_REF}"],
             capture_output=True, text=True, timeout=120,
         )
         if p.returncode != 0:
-            _log_line(f"[fetch] {p.stderr.strip()[:200]}")
+            # The device may have no direct route to the update URL (e.g. a
+            # network that blocks github.com). Fall back to the clone's
+            # `origin` remote — for a stock setup that is the same repo —
+            # into the SAME stable ref.
+            p2 = subprocess.run(
+                ["git", "-C", str(repo), "fetch", "--force",
+                 "origin", f"main:{REMOTE_REF}"],
+                capture_output=True, text=True, timeout=120,
+            )
+            if p2.returncode != 0:
+                _log_line(f"[fetch] {p.stderr.strip()[:120]} | "
+                          f"origin fallback: {p2.stderr.strip()[:120]}")
+            return
     except Exception as e:  # noqa: BLE001 — a failed fetch must never crash
         _log_line(f"[fetch] {e}")
 
