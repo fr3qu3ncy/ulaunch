@@ -1092,6 +1092,12 @@ function listArrow(dir: 1 | -1, card: HTMLElement, list: HTMLElement[],
 }
 
 document.addEventListener('keydown', (e: KeyboardEvent) => {
+  /* cursor: any keydown means keyboard driving — hide the OS pointer
+     (CSS: html.kb-nav). Runs BEFORE the modal early-return so the cursor
+     stays hidden while the sudo/creds modals own the keyboard too. It
+     comes back on the next real mouse motion — see the mousemove
+     listener at the bottom of the file. */
+  document.documentElement.classList.add('kb-nav')
   if (document.getElementById('sudo-modal') ||
       document.getElementById('creds-modal')) return /* modal owns keys */
 
@@ -1419,3 +1425,13 @@ getSettings().then(st => overlay.setIdleTimeout(st.idle_timeout)).catch(() => {}
 /* window resizes change how much of the strip overflows — refresh the
    edge arrows */
 window.addEventListener('resize', updateNavArrows)
+
+/* cursor mode (the counterpart of the keydown class above): the moment
+   the pointer moves — or is pressed — it's back in control, so the
+   cursor comes back. mousedown too: a click that hasn't moved yet is
+   still mouse driving; touchstart covers the uConsole touchscreen,
+   whose synthetic mousemove may never arrive. */
+function showCursor() { document.documentElement.classList.remove('kb-nav') }
+window.addEventListener('mousemove', showCursor, { passive: true })
+window.addEventListener('mousedown', showCursor, { passive: true })
+window.addEventListener('touchstart', showCursor, { passive: true })

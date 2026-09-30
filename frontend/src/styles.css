@@ -45,6 +45,16 @@ html, body {
     to bottom, transparent 0 3px, rgba(0, 0, 0, 0.12) 3px 4px);
 }
 
+/* ── cursor mode ──
+   The uConsole is driven by the keyboard — the OS pointer is noise on
+   the 1280×720 display. Any keydown puts <html> in keyboard mode
+   (main.ts) and this hides the cursor on EVERY element (!important
+   beats the logo's inline cursor:pointer and the tile/btn rules).
+   Any mouse motion — or a click, a stationary pointer can still be
+   aiming at something — removes .kb-nav and the cursors come back.
+   The text caret inside inputs is a separate thing and stays visible. */
+html.kb-nav, html.kb-nav * { cursor: none !important; }
+
 /* ── header ── */
 .hdr {
   display: flex; align-items: center; gap: 1.2em;
