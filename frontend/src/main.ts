@@ -656,9 +656,16 @@ function settingsContent(): HTMLElement {
   const updBtn = el('button', 'btn update-btn-row')
   updBtn.tabIndex = 0
   updBtn.dataset.fk = 'set:update'
+  /* The button is NEVER disabled: it is a keyboard stop in all three
+     states (available / up-to-date / checking). When no update is
+     available, Enter re-checks against GitHub instead of opening the
+     overlay. It is the FIRST control in the settings content, so entering
+     the screen lands on it — which keeps the UPDATE section visible
+     (focusing a control further down would scroll it off the top). */
   updBtn.textContent = 'CHECKING…'
   updBtn.addEventListener('click', () => {
-    if (!updBtn.disabled) beginUpdate()
+    if (updateState?.available) beginUpdate()
+    else void checkUpdate(true)
   })
   updRow.appendChild(updBtn)
   c.appendChild(updRow)
@@ -667,7 +674,6 @@ function settingsContent(): HTMLElement {
   c.appendChild(updNote)
   paintUpdateInfo(updCur, updNew)
   if (updateState) applyUpdateButton(updBtn)
-  else updBtn.disabled = true
 
   c.appendChild(el('div', 'section-title', 'SCREENSAVER'))
   const idleRow = el('div', 'setting-row')
@@ -810,15 +816,17 @@ function applyUpdateButton(btn: HTMLElement) {
   const s = updateState
   const avail = !!(s?.available)
   const known = !!(s?.remote_known)
-  b.disabled = !avail
+  /* never disabled — the button is a keyboard stop in every state (see
+     settingsContent). Only the label, the pulse class, and the title
+     change. */
+  b.disabled = false
   b.classList.toggle('update-btn', avail)
-  b.classList.remove('update-up-to-date')
   if (avail) {
     b.textContent = '⟳ UPDATE'
     b.title = `update ${s!.local} → ${s!.remote}`
   } else if (known) {
     b.textContent = 'UP TO DATE'
-    b.title = 'you are on the latest version'
+    b.title = 'you are on the latest version — Enter re-checks'
   } else {
     b.textContent = 'CHECKING…'
     b.title = 'contacting github…'

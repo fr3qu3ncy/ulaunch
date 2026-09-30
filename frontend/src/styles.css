@@ -1064,14 +1064,10 @@ html.kb-nav, html.kb-nav * { cursor: none !important; }
   0%, 100% { box-shadow: 0 0 8px rgba(61, 255, 158, 0.3); opacity: 1; }
   50% { box-shadow: 0 0 20px rgba(61, 255, 158, 0.7); opacity: 0.82; }
 }
-.btn.update-btn:disabled {
-  animation: none;
-  opacity: 1;
-  color: var(--dim);
-  border-color: var(--panel-line);
-  background: rgba(255, 255, 255, 0.02);
-  cursor: default;
-}
+/* the button is NEVER disabled (keyboard stop in all states): the
+   non-pulsing state keeps the base .btn look — only the label/title
+   change, no colour shift (the pulse is the signal that there's something
+   to do) */
 
 /* ── update overlay (live log → RESTARTING / FAILED) ───────── */
 /* reuses .esc-menu/.box (fixed, full-screen, z-100). The log is a terminal
