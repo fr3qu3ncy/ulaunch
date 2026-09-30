@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# ulaunch — daily entry point: server + kiosk browser, clean shutdown
+# ulaunch — daily entry point: server + kiosk browser, clean shutdown, and
+# an in-place self-update loop.
+#
+# The app can update itself (Settings → UPDATE): the server does
+# `git pull` + `./install.sh`, writes a restart flag, and closes the kiosk
+# browser. Closing the browser is what drives this loop — `wait` returns,
+# we clean up the server, and if the flag is set we start again with the
+# freshly pulled code. No flag (the user just chose Exit) = a clean stop.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 PORT="${ULAUNCH_PORT:-8317}"
 RUN_DIR="${ULAUNCH_RUN_DIR:-$HOME/.ulaunch/run}"
 mkdir -p "$RUN_DIR"
+RESTART_FLAG="$RUN_DIR/restart-after-update"
 
 [ -d .venv ] || { echo "Not installed — run ./install.sh first"; exit 1; }
 [ -f backend/static/index.html ] || { echo "Frontend build missing — run ./install.sh"; exit 1; }
@@ -21,60 +29,90 @@ fi
   exit 1
 }
 
-# clear stale pid files
-rm -f "$RUN_DIR/server.pid" "$RUN_DIR/browser.pid"
+# REFUSE to start against a stale server on the first go. A previous session
+# that died hard (power button, crash) can still hold port 8317 — the new
+# server would die on "address in use" (silent, it's a background job) and
+# the kiosk would end up on the OLD code with a NEW browser. That is the
+# "pulled the latest but still see the old UI" trap. (On a restart from an
+# in-place update we already know the port is clear — see the loop below.)
+health() { curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; }
 
-# REFUSE to start against a stale server. If a previous session died
-# hard (power button, crash) its server can still hold port 8317 — the
-# new server would die on "address in use" (silent, it's a background
-# job) and the kiosk would end up on the OLD code with a NEW browser.
-# That is the "pulled the latest but still see the old UI" trap.
-if curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then
-  echo "✗ port $PORT is already serving ulaunch (stale instance from a"
-  echo "  previous session?). Kill it, then re-run ./ulaunch:"
-  echo "      fuser -k $PORT/tcp      # or: pkill -f 'python backend/main.py'"
-  exit 1
-fi
-
-# 1. backend server
-ULAUNCH_PORT="$PORT" ULAUNCH_RUN_DIR="$RUN_DIR" \
-  ./.venv/bin/python backend/main.py &
-SERVER_PID=$!
-echo "$SERVER_PID" > "$RUN_DIR/server.pid"
+SERVER_PID=""
+BROWSER_PID=""
 
 cleanup() {
   [ -n "${BROWSER_PID:-}" ] && kill "$BROWSER_PID" 2>/dev/null || true
-  kill "$SERVER_PID" 2>/dev/null || true
+  [ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null || true
   wait 2>/dev/null || true
   rm -f "$RUN_DIR/server.pid" "$RUN_DIR/browser.pid"
+  SERVER_PID=""
+  BROWSER_PID=""
 }
 trap 'exit 0' SIGINT SIGTERM
 trap cleanup EXIT
 
-# 2. wait for server health
-for _ in $(seq 1 50); do
-  if curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1; then break; fi
-  sleep 0.2
-done
-curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 || {
-  echo "✗ server did not start on 127.0.0.1:$PORT"
-  exit 1
+# One server + browser session. Returns when the browser exits (the user
+# chose Exit, or the in-app updater closed it).
+run_once() {
+  # clear stale pid files from any previous incarnation
+  rm -f "$RUN_DIR/server.pid" "$RUN_DIR/browser.pid"
+
+  # 1. backend server
+  ULAUNCH_PORT="$PORT" ULAUNCH_RUN_DIR="$RUN_DIR" \
+    ./.venv/bin/python backend/main.py &
+  SERVER_PID=$!
+  echo "$SERVER_PID" > "$RUN_DIR/server.pid"
+
+  # 2. wait for server health
+  local up=0
+  for _ in $(seq 1 50); do
+    if health; then up=1; break; fi
+    sleep 0.2
+  done
+  if [ "$up" -ne 1 ]; then
+    echo "✗ server did not start on 127.0.0.1:$PORT"
+    return 1
+  fi
+
+  # 3. kiosk browser
+  "$BROWSER" \
+    --kiosk \
+    --app="http://127.0.0.1:$PORT" \
+    --no-first-run \
+    --no-default-browser-check \
+    --disable-extensions \
+    --disable-sync \
+    --disable-session-crashed-bubble \
+    --disable-background-timer-throttling \
+    --window-size=1280,720 &
+  BROWSER_PID=$!
+  echo "$BROWSER_PID" > "$RUN_DIR/browser.pid"
+
+  # 4. wait: the browser exiting (user Exit, or the updater's relaunch)
+  #    ends this session. Non-zero (killed) is expected — never trip set -e.
+  wait "$BROWSER_PID" 2>/dev/null || true
 }
 
-# 3. kiosk browser
-"$BROWSER" \
-  --kiosk \
-  --app="http://127.0.0.1:$PORT" \
-  --no-first-run \
-  --no-default-browser-check \
-  --disable-extensions \
-  --disable-sync \
-  --disable-session-crashed-bubble \
-  --disable-background-timer-throttling \
-  --window-size=1280,720 &
-BROWSER_PID=$!
-echo "$BROWSER_PID" > "$RUN_DIR/browser.pid"
+# ── main: run, and restart if — and only if — an in-place update asked for it
+echo "▸ ulaunch starting (port $PORT)"
+while true; do
+  run_once
 
-# 4. wait: browser exiting (user chose Back-to-Desktop/Exit) ends the session
-wait "$BROWSER_PID" 2>/dev/null || true
+  # the browser is gone — tear the server down before anything else
+  cleanup
+
+  if [ -f "$RESTART_FLAG" ]; then
+    rm -f "$RESTART_FLAG"
+    echo "▸ update requested — restarting ulaunch with the new version"
+    # give the server a moment to release the port (it was just SIGTERMed)
+    for _ in $(seq 1 50); do
+      health || break
+      sleep 0.2
+    done
+    continue
+  fi
+
+  echo "▸ ulaunch stopped"
+  break
+done
 exit 0

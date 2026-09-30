@@ -26,6 +26,7 @@ from wifiscan import wifi, wireless_adapters, iwlist_installed, probe_scan
 from ble import (ble, bt_adapters, bluetooth_available, bt_diagnostics,
                  restart_bluetooth, power_adapter)
 from sudo import SudoRequired, sudo
+import updater
 
 BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
@@ -67,6 +68,7 @@ def health() -> dict:
         "name": "ulaunch",
         "port": PORT,
         "build": _build_info(),
+        "version": updater.local_version(),
         "os": {
             "system": platform.system(),
             "release": platform.release(),
@@ -276,6 +278,32 @@ def settings_put(payload: dict) -> dict:
         return settings.set_all(payload or {})
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+# ── self-update ───────────────────────────────────────────────
+
+@app.get("/api/update")
+def update_check() -> dict:
+    """Compare the local VERSION against origin/main on GitHub. Kicks a
+    background git fetch (throttled) so it answers from the last known state
+    immediately. The UI calls this on boot and on a slow interval."""
+    return updater.check_for_update()
+
+
+@app.post("/api/update/run")
+def update_run() -> dict:
+    """Start the update (git pull + install.sh + relaunch) in a background
+    thread. The UI then polls /api/update/status for the live log."""
+    res = updater.run_update()
+    if not res.get("ok"):
+        raise HTTPException(409, res.get("error", "update already running"))
+    return res
+
+
+@app.get("/api/update/status")
+def update_status() -> dict:
+    """Live update log + whether an update is in flight (the UI polls this)."""
+    return updater.update_status()
 
 
 # ── scanner ─────────────────────────────────────────────────────

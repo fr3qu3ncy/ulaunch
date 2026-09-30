@@ -1007,3 +1007,108 @@ html.kb-nav, html.kb-nav * { cursor: none !important; }
 }
 .overlay .standby .s2 { font-size: 1.1em; letter-spacing: 0.4em; color: var(--dim); text-shadow: none; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* ── self-update (M28) ─────────────────────────────────────────
+   Three surfaces follow the same state: a pulsing UPDATE stat in the
+   header (like the scan RUNNING text), a very-slight pulse on the
+   settings tile, and a pulsing UPDATE button on the settings screen.
+   A gentler pulse than the header: the tile is a persistent nav element,
+   not an attention grabber. */
+
+/* header stat — bright, clearly pulsing (matches .scan-status.running) */
+.hdr .stat.update-avail b {
+  color: var(--green);
+  text-shadow: 0 0 10px rgba(61, 255, 158, 0.7);
+}
+.hdr .stat.update-avail {
+  color: var(--green);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* settings tile — a very slight pulse (opacity floor kept high so it
+   never looks broken, just gently alive) */
+.tile.update-avail { animation: tilePulse 2.6s ease-in-out infinite; }
+@keyframes tilePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.72; } }
+/* the active (selected) settings tile still pulses but stays on top of the
+   dim rule — the pulse is a class, so it coexists with .active */
+
+/* settings screen: current / available version lines + the update button */
+.update-row { flex-direction: row; align-items: center; }
+.update-info { display: flex; flex-direction: column; gap: 0.35em; }
+.update-cur, .update-new {
+  font-family: var(--font-display);
+  font-size: 1.05em; font-weight: 700; letter-spacing: 0.1em;
+  color: var(--soft);
+}
+.update-cur b, .update-new b { color: var(--text); font-weight: 700; }
+.update-new.avail b {
+  color: var(--green);
+  text-shadow: 0 0 10px rgba(61, 255, 158, 0.6);
+}
+.update-note {
+  color: var(--dim);
+  font-size: 0.95em; letter-spacing: 0.03em; line-height: 1.5;
+  margin-top: 0.5em;
+}
+
+/* the UPDATE button: pulses (opacity + glow) while an update is available.
+   It is the primary CTA of the screen — a slightly stronger pulse than the
+   tile, but gentler than the header stat. */
+.btn.update-btn {
+  color: var(--green);
+  border-color: rgba(61, 255, 158, 0.5);
+  background: rgba(61, 255, 158, 0.07);
+  animation: updateBtnPulse 1.6s ease-in-out infinite;
+}
+@keyframes updateBtnPulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(61, 255, 158, 0.3); opacity: 1; }
+  50% { box-shadow: 0 0 20px rgba(61, 255, 158, 0.7); opacity: 0.82; }
+}
+.btn.update-btn:disabled {
+  animation: none;
+  opacity: 1;
+  color: var(--dim);
+  border-color: var(--panel-line);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: default;
+}
+
+/* ── update overlay (live log → RESTARTING / FAILED) ───────── */
+/* reuses .esc-menu/.box (fixed, full-screen, z-100). The log is a terminal
+   panel like the About screen's; the status line is a keyboard stop. */
+.update-status {
+  font-family: var(--font-display);
+  font-size: 1.05em; font-weight: 700; letter-spacing: 0.14em;
+  color: var(--amber);
+  text-transform: uppercase;
+  outline: none;
+  padding: 0.2em 0;
+  min-height: 1.4em;
+}
+.update-status:focus-visible {
+  outline: 3px dashed rgba(255, 255, 255, 0.7);
+  outline-offset: 3px;
+}
+.update-status.ok { color: var(--green); text-shadow: 0 0 10px rgba(61, 255, 158, 0.6); }
+.update-status.err { color: var(--red); text-shadow: 0 0 10px rgba(255, 59, 92, 0.6); }
+.update-log {
+  background: rgba(0, 0, 0, 0.62);
+  border: 1px solid rgba(61, 255, 158, 0.35);
+  border-radius: 8px;
+  box-shadow: 0 0 34px rgba(61, 255, 158, 0.14), inset 0 0 60px rgba(61, 255, 158, 0.04);
+  padding: 1.2em 1.6em;
+  font-family: 'Courier New', monospace;
+  font-size: 1.02em; line-height: 1.7;
+  color: var(--green);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 62vh;
+  overflow-y: auto;
+  min-height: 8em;
+}
+.update-done { align-items: center; }
+.update-restart {
+  font-size: 4em; line-height: 1;
+  color: var(--green);
+  text-shadow: 0 0 24px rgba(61, 255, 158, 0.9);
+  animation: pulse 1.1s ease-in-out infinite;
+}

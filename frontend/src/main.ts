@@ -6,12 +6,14 @@ import {
   toolsCheck, toolsInstall,
   systemStatus, systemAction, getSettings, putSettings,
   sudoStatus,
+  updateCheck, type UpdateCheck,
   type Preset, type VpnStatus,
 } from './api'
 import { mountScan, type ScanHandle } from './scan'
 import { mountWifi, type WifiHandle } from './wifi'
 import { mountBle, type BleHandle } from './ble'
 import * as overlay from './overlay'
+import * as update from './update'
 import { askSudo, type SudoOpts } from './sudo'
 import { askVpnCreds } from './vpnCreds'
 
@@ -47,6 +49,11 @@ let vpnLogTimer: number | null = null
 let scanHandle: ScanHandle | null = null
 let wifiHandle: WifiHandle | null = null
 let bleHandle: BleHandle | null = null
+
+/* self-update state: the last known comparison against GitHub. `null`
+   until the first /api/update returns. The header stat + settings section
+   + the settings-tile pulse all read this. */
+let updateState: UpdateCheck | null = null
 
 /* ───────────────────────── helpers ───────────────────────── */
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -108,6 +115,17 @@ function header(net: NetInfo | null): HTMLElement {
     up.dataset.fk = 'stat:up'
     up.innerHTML = `UP <b>${fmtUptime(net.uptime_s)}</b>`
     h.appendChild(up)
+    /* UPDATE stat: shown only while an update is available on GitHub —
+       pulsing, sitting between UP and TIME. A full render() (the 15s net
+       refresh on network/about) rebuilds the header, so the stat is rendered
+       HERE from updateState, not just in-place by updateUpdateUi(). */
+    if (updateState?.available) {
+      const us = el('div', 'stat update-avail')
+      us.dataset.fk = 'stat:update'
+      us.title = `update ${updateState.local} → ${updateState.remote} available — see SETTINGS`
+      us.innerHTML = `UPDATE <b>${updateState.remote}</b>`
+      h.appendChild(us)
+    }
     const clk = el('div', 'stat'); clk.id = 'clock'
     h.appendChild(clk)
   }
@@ -143,6 +161,10 @@ function nav(): HTMLElement {
     d.dataset.screen = t.id
     d.dataset.fk = `tile:${t.id}`
     d.tabIndex = 0
+    /* a very slight pulse on the settings tile while an update is
+       available (the tile is rebuilt every render, so the class is set
+       here AND kept in sync by updateUpdateUi()) */
+    if (t.id === 'settings' && updateState?.available) d.classList.add('update-avail')
     d.innerHTML = `<span class="ico">${t.ico}</span>${t.label}`
     d.addEventListener('click', () => go(t.id))
     strip.appendChild(d)
@@ -292,7 +314,7 @@ function homeContent(net: NetInfo | null): HTMLElement {
    fetched from the server so it reflects the bundle actually on disk),
    the machine, and a status line. No interactive controls — the keyboard
    stops are the logo (→ row) and Esc (menu). */
-let aboutBuild: { commit?: string; date?: string } = {}
+let aboutBuild: { commit?: string; date?: string; version?: string } = {}
 let aboutOs: { system: string; release: string; machine: string } =
   { system: '…', release: '…', machine: '…' }
 let aboutBooted = false
@@ -312,7 +334,7 @@ function aboutContent(): HTMLElement {
     `${aboutOs.system} ${aboutOs.release} (${aboutOs.machine})`,
     '',
     'ulaunch@uconsole:~$ ulaunch --version',
-    `build ${commit} · ${date}`,
+    `v${aboutBuild.version || '?'} · build ${commit} · ${date}`,
     `uptime ${up} · local only · 127.0.0.1:8317`,
     '',
     'access granted. welcome back, operator.',
@@ -619,6 +641,34 @@ async function doPower(action: string, label: string, btn: HTMLButtonElement) {
 
 function settingsContent(): HTMLElement {
   const c = el('div', 'content')
+
+  /* UPDATE — the first section: current version, the version available on
+     GitHub, and the button to pull + install + relaunch. The button pulses
+     while an update is available and is disabled (UP TO DATE) otherwise. */
+  c.appendChild(el('div', 'section-title', 'UPDATE'))
+  const updRow = el('div', 'setting-row update-row')
+  const updInfo = el('div', 'update-info')
+  const updCur = el('div', 'update-cur')
+  const updNew = el('div', 'update-new')
+  updInfo.appendChild(updCur)
+  updInfo.appendChild(updNew)
+  updRow.appendChild(updInfo)
+  const updBtn = el('button', 'btn update-btn-row')
+  updBtn.tabIndex = 0
+  updBtn.dataset.fk = 'set:update'
+  updBtn.textContent = 'CHECKING…'
+  updBtn.addEventListener('click', () => {
+    if (!updBtn.disabled) beginUpdate()
+  })
+  updRow.appendChild(updBtn)
+  c.appendChild(updRow)
+  const updNote = el('div', 'update-note')
+  updNote.textContent = 'Pulls the latest from GitHub, reinstalls dependencies, then relaunches ulaunch automatically.'
+  c.appendChild(updNote)
+  paintUpdateInfo(updCur, updNew)
+  if (updateState) applyUpdateButton(updBtn)
+  else updBtn.disabled = true
+
   c.appendChild(el('div', 'section-title', 'SCREENSAVER'))
   const idleRow = el('div', 'setting-row')
   idleRow.appendChild(el('span', 'setting-label', 'IDLE TIMEOUT'))
@@ -696,6 +746,115 @@ function flashSaved(c: HTMLElement) {
   c.appendChild(f)
   if (savedFlashTimer) clearTimeout(savedFlashTimer)
   savedFlashTimer = window.setTimeout(() => f.remove(), 1500)
+}
+
+/* ───────────────────────── self-update ───────────────────────── */
+/* Ask the server to compare our VERSION against origin/main on GitHub.
+   The server throttles the actual `git fetch` (once/60s) and answers from
+   the last known state, so this is cheap to call. On change we refresh the
+   header stat, the settings section, and the settings-tile pulse. */
+let updateChecking = false
+async function checkUpdate(force = false) {
+  if (updateChecking) return
+  updateChecking = true
+  try {
+    const s = await updateCheck()
+    updateState = s
+    updateUpdateUi()
+  } catch { /* backend still booting — retry next interval */ }
+  updateChecking = false
+  void force
+}
+
+/* Reconcile the three update UI surfaces against the current state without
+   rebuilding the content area (a full render() would reset controls under
+   the user). Only touches the header stat, the settings tile, and the
+   settings update section — each only if it exists in the current DOM. */
+function updateUpdateUi() {
+  const avail = !!(updateState?.available)
+  /* header stat: present only while an update is available (pulsing). It
+     lives between the UP and TIME stats — insert before #clock. */
+  const h = app.querySelector<HTMLElement>('.hdr')
+  const stat = h?.querySelector<HTMLElement>('[data-fk="stat:update"]')
+  if (avail) {
+    if (!stat && h) {
+      const s = el('div', 'stat update-avail')
+      s.dataset.fk = 'stat:update'
+      s.title = `update ${updateState?.local} → ${updateState?.remote} available — see SETTINGS`
+      s.innerHTML = `UPDATE <b>${updateState?.remote ?? ''}</b>`
+      h.insertBefore(s, h.querySelector('#clock') || null)
+    } else if (stat) {
+      stat.innerHTML = `UPDATE <b>${updateState?.remote ?? ''}</b>`
+    }
+  } else if (stat) {
+    stat.remove()
+  }
+  /* settings tile: a very slight pulse while an update is available. The
+     tile is rebuilt on render() so the class is re-applied there too
+     (see nav()). */
+  const tile = app.querySelector<HTMLElement>('.tile[data-screen="settings"]')
+  tile?.classList.toggle('update-avail', avail)
+  /* settings update button: only present on the settings screen */
+  const btn = app.querySelector<HTMLElement>('[data-fk="set:update"]')
+  if (btn) {
+    applyUpdateButton(btn)
+    const row = btn.closest('.update-row')
+    const cur = row?.querySelector<HTMLElement>('.update-cur')
+    const next = row?.querySelector<HTMLElement>('.update-new')
+    if (cur && next) paintUpdateInfo(cur, next)
+  }
+}
+
+function applyUpdateButton(btn: HTMLElement) {
+  const b = btn as HTMLButtonElement
+  const s = updateState
+  const avail = !!(s?.available)
+  const known = !!(s?.remote_known)
+  b.disabled = !avail
+  b.classList.toggle('update-btn', avail)
+  b.classList.remove('update-up-to-date')
+  if (avail) {
+    b.textContent = '⟳ UPDATE'
+    b.title = `update ${s!.local} → ${s!.remote}`
+  } else if (known) {
+    b.textContent = 'UP TO DATE'
+    b.title = 'you are on the latest version'
+  } else {
+    b.textContent = 'CHECKING…'
+    b.title = 'contacting github…'
+  }
+}
+
+/* Fill the settings "current / available" version lines from the last check.
+   Three states: checking (remote not fetched yet), up to date, or available. */
+function paintUpdateInfo(cur: HTMLElement, next: HTMLElement) {
+  const s = updateState
+  cur.innerHTML = `CURRENT <b>${s?.local || '—'}</b>`
+  if (s?.available) {
+    next.className = 'update-new avail'
+    next.innerHTML = `AVAILABLE <b>${s.remote}</b>`
+  } else if (s && s.remote_known) {
+    next.className = 'update-new'
+    next.innerHTML = `AVAILABLE <b>${s.remote}</b> <span class="dim">· latest</span>`
+  } else {
+    next.className = 'update-new'
+    next.innerHTML = 'AVAILABLE <b>…</b> <span class="dim">checking…</span>'
+  }
+}
+
+/* Kick the in-app update overlay (live log → RESTARTING → new app). */
+function beginUpdate() {
+  update.startUpdate({
+    from: updateState?.local || '?',
+    to: updateState?.remote || '?',
+    onDismiss: () => {
+      /* the overlay is gone (error path) — re-render settings and re-check
+         so the button state is accurate again */
+      render()
+      focusContentFirst()
+      checkUpdate(true)
+    },
+  })
 }
 
 function footer(): HTMLElement {
@@ -1099,7 +1258,8 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
      listener at the bottom of the file. */
   document.documentElement.classList.add('kb-nav')
   if (document.getElementById('sudo-modal') ||
-      document.getElementById('creds-modal')) return /* modal owns keys */
+      document.getElementById('creds-modal') ||
+      document.getElementById('update-overlay')) return /* modal owns keys */
 
   /* ── standby (Esc) menu: arrows/Tab move between its buttons ── */
   if (escOpen) {
@@ -1417,6 +1577,13 @@ refresh()
 setInterval(refresh, 15_000)
 setInterval(tickClock, 5_000)
 tickClock()
+
+/* self-update: check GitHub on boot and again every 60s (the server
+   throttles the git fetch to once/60s, so this is cheap). The header stat,
+   the settings-tile pulse and the settings UPDATE section all follow the
+   result — see updateUpdateUi(). */
+checkUpdate()
+setInterval(() => checkUpdate(), 60_000)
 
 /* idle screensaver — timeout comes from settings */
 overlay.initOverlay(60)

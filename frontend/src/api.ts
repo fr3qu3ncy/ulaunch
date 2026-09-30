@@ -39,7 +39,8 @@ export interface Health {
   ok: boolean
   name: string
   port: number
-  build: { commit?: string; date?: string }
+  build: { commit?: string; date?: string; version?: string }
+  version: string
   os: { system: string; release: string; machine: string }
 }
 
@@ -185,6 +186,34 @@ export function putSettings(payload: Partial<Settings>): Promise<Settings> {
       return data as Settings
     })
   return r
+}
+
+/* ── self-update ─────────────────────────────────────────── */
+export interface UpdateCheck {
+  local: string
+  remote: string
+  remote_known: boolean
+  available: boolean
+  checked: boolean
+  dirty: boolean
+}
+
+export interface UpdateStatus {
+  running: boolean
+  outcome: 'idle' | 'running' | 'done' | 'error'
+  log: string[]
+}
+
+export function updateCheck(): Promise<UpdateCheck> {
+  return getJSON<UpdateCheck>('/api/update')
+}
+
+export function updateRun(): Promise<{ ok: boolean }> {
+  return postJSON('/api/update/run', {})
+}
+
+export function updateStatus(): Promise<UpdateStatus> {
+  return getJSON<UpdateStatus>('/api/update/status')
 }
 
 export function fmtUptime(s: number): string {
