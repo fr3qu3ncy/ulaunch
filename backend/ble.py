@@ -175,7 +175,15 @@ class BleSession:
                             self.updated = time.time()
                 except Exception:  # noqa: BLE001 — never kill the session
                     pass
-                self._stop.wait(1.0)
+                # MUST be asyncio.sleep, NOT self._stop.wait() (M26.6):
+                # threading.Event.wait() BLOCKS this thread, and with it the
+                # event loop — dbus_fast reads the bus via
+                # loop.add_reader callbacks, so while the loop is parked in
+                # a sync wait, advertisement signals pile up in the socket
+                # and their PropertiesChanged callbacks (the ONLY path that
+                # feeds seen_devices) never run. On the uConsole that
+                # showed as RUNNING · 0 devices on a working radio.
+                await asyncio.sleep(1.0)
         finally:
             try:
                 await scanner.stop()

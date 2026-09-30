@@ -115,3 +115,70 @@ assert a["address"] == "D8:3A:DD:FE:88:07"
 assert a["powered"] is True
 assert a["path"] == "/org/bluez/hci0"
 print("PASS  D-Bus parser names by object name hci0, MAC stays in address (M26.5)")
+
+# M26.6 regression: the poll loop must YIELD the event loop (asyncio.sleep),
+# not park it in a blocking threading.Event.wait() — dbus_fast reads the
+# bus via loop.add_reader callbacks, so a blocking wait starves the
+# advertisement-signal handlers and the scan sits RUNNING · 0 devices.
+# Fake scanner through the REAL BleSession._scan, run on its own loop:
+import threading as _th, time as _t, types as _ty, asyncio as _aio  # noqa: E402
+import bleak as _bleak_mod  # noqa: E402
+
+def _mk_adv(name, rssi):
+    from bleak.backends.scanner import AdvertisementData
+    return AdvertisementData(local_name=name, manufacturer_data={},
+                             service_data={},
+                             service_uuids=["00001800-0000-1000-8000-00805f9b34fb"],
+                             tx_power=4, rssi=rssi, platform_data=())
+
+class _FakeScanner:
+    """The devices only become visible once a task SCHEDULED ON THE
+    SCANNER'S EVENT LOOP fires (like a real dbus_fast
+    loop.add_reader signal callback). A blocking Event.wait() in the
+    poll loop starves that task -> 0 devices (the M26.6 symptom);
+    asyncio.sleep lets it run -> 2 devices."""
+    def __init__(self, **kw):
+        self.kw = kw
+        self._armed = False
+    async def start(self):
+        # Arm 0.3 s from now, via a task ON the scanner's event loop.
+        # It fires only while the loop is RUNNING — exactly like a real
+        # dbus_fast signal callback. Blocking poll loop -> never fires.
+        def _arm():
+            self._armed = True
+        loop = _aio.get_running_loop()
+        loop.call_later(0.3, _arm)
+    async def stop(self):
+        pass
+    @property
+    def discovered_devices_and_advertisement_data(self):
+        if not self._armed:
+            return {}
+        d1 = _ty.SimpleNamespace(address="AA:11:22:33:44:55", name="Test Mouse")
+        d2 = _ty.SimpleNamespace(address="BB:66:77:88:99:AA", name=None)
+        return {"AA:11:22:33:44:55": (d1, _mk_adv("Test Mouse", -55)),
+                "BB:66:77:88:99:AA": (d2, _mk_adv(None, -80))}
+
+def _poll_test(s):
+    orig = _bleak_mod.BleakScanner
+    _bleak_mod.BleakScanner = _FakeScanner
+    try:
+        s.start("hci0")
+        for _ in range(60):
+            if len(s.devices) == 2:
+                break
+            _t.sleep(0.1)
+        s.stop()
+    finally:
+        _bleak_mod.BleakScanner = orig
+    assert s.status == "stopped", s.status
+    assert len(s.devices) == 2, s.devices
+    assert s.error == "", s.error
+
+sess2 = ble.BleSession()
+_t2 = _th.Thread(target=_poll_test, args=(sess2,), daemon=True)
+_t2.start()
+_t2.join(timeout=15)
+assert not _t2.is_alive(), "M26.6 BUG: poll loop never yielded / hung"
+assert len(sess2.devices) == 2
+print("PASS  poll loop yields the event loop; 2 devices merged (M26.6)")
