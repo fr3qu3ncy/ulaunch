@@ -73,3 +73,45 @@ except BleakError as e:
     assert "or_patterns" in str(e)
 BleakScanner(scanning_mode="active", bluez={"adapter": "hci0"})
 print("PASS  active scan ctor OK; passive-without-or_patterns raises (M26.4)")
+
+# M26.5 regression: the D-Bus parser must name adapters by OBJECT NAME
+# (hci0 — what bleak's bluez= arg needs), NOT by the Address property
+# (the MAC — which made bleak look for /org/bluez/D8:3A:DD:FE:88:07 and
+# die with "adapter 'D8:3A:..' not found" on the uConsole).
+import unittest.mock as mock  # noqa: E402
+uconsole_reply = {
+    "/org/bluez/hci0": {
+        "org.bluez.Adapter1": {
+            "Address": "D8:3A:DD:FE:88:07",
+            "Name": "uConsole",
+            "Powered": True,
+            "Discoverable": False,
+            "Pairable": False,
+        },
+        "org.freedesktop.DBus.Properties": {},
+    },
+    "/org/bluez/hci0/dev_D8_3A_DD_FE_88_07": {
+        "org.bluez.Device1": {"Address": "D8:3A:DD:FE:88:07"},
+    },
+}
+with mock.patch("dbus_fast.aio.message_bus.MessageBus") as MB:
+    bus = MB.return_value
+    async def _connect():
+        pass
+    bus.connect = _connect
+    async def _call(msg):
+        class R:
+            body = [uconsole_reply]
+        return R()
+    bus.call = _call
+    async def _disconnect():
+        pass
+    bus.disconnect = _disconnect
+    got = ble.bt_adapters()
+assert len(got) == 1, f"expected 1 adapter, got {got}"
+a = got[0]
+assert a["name"] == "hci0", f"M26.5 BUG: name={a['name']!r} (must be hci0, not the MAC)"
+assert a["address"] == "D8:3A:DD:FE:88:07"
+assert a["powered"] is True
+assert a["path"] == "/org/bluez/hci0"
+print("PASS  D-Bus parser names by object name hci0, MAC stays in address (M26.5)")

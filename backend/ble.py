@@ -249,6 +249,36 @@ def _adapter_state(d: Path) -> dict:
     }
 
 
+def bluez_adapters_from_managed(managed: dict[str, dict]) -> list[dict]:
+    """org.bluez ObjectManager.GetManagedObjects reply -> adapter dicts.
+    Pure function over the unpacked {path: {iface: {props}}} mapping so
+    the parsing is unit-testable without a D-Bus bus.
+
+    `name` MUST be the D-Bus OBJECT NAME (path last segment, "hci0") —
+    it is what bleak's bluez={'adapter': ...} needs: bleak builds the
+    path itself as /org/bluez/<name> (bluezdbus/scanner.py) and looks it
+    up among the managed objects. M26.5 bug: we used the Address
+    PROPERTY (the MAC, D8:3A:DD:FE:88:07) as the name — bleak looked for
+    /org/bluez/D8:3A:DD:FE:88:07, for which no such object exists, and
+    the scan died with "adapter 'D8:3A:..' not found" although the radio
+    was fine. The MAC stays in `address` for display only."""
+    out: list[dict] = []
+    for path, ifaces in managed.items():
+        props = ifaces.get("org.bluez.Adapter1")
+        if not props:
+            continue
+        obj_name = path.rsplit("/", 1)[-1]
+        out.append({
+            "name": obj_name,
+            "address": props.get("Address", ""),
+            "powered": bool(props.get("Powered")),
+            "discoverable": bool(props.get("Discoverable")),
+            "pairable": bool(props.get("Pairable")),
+            "path": f"/org/bluez/{obj_name}",
+        })
+    return out
+
+
 def _adapters_from_bluez() -> list[dict]:
     """Adapters straight from BlueZ over D-Bus (org.bluez
     ObjectManager.GetManagedObjects) — the authoritative source: it is the
@@ -273,8 +303,6 @@ def _adapters_from_bluez() -> list[dict]:
     from dbus_fast import BusType, Message, unpack_variants
     from dbus_fast.aio.message_bus import MessageBus
 
-    ADAPTER_IFACE = "org.bluez.Adapter1"
-
     async def probe() -> list[dict]:
         bus = MessageBus(bus_type=BusType.SYSTEM)
         try:
@@ -291,19 +319,8 @@ def _adapters_from_bluez() -> list[dict]:
                 interface="org.freedesktop.DBus.ObjectManager",
                 member="GetManagedObjects",
             ))
-            for path, interfaces in reply.body[0].items():
-                props = unpack_variants(interfaces).get(ADAPTER_IFACE)
-                if not props:
-                    continue
-                name = props.get("Address") or path.rsplit("/", 1)[-1]
-                out.append({
-                    "name": name,
-                    "address": props.get("Address", ""),
-                    "powered": bool(props.get("Powered")),
-                    "discoverable": bool(props.get("Discoverable")),
-                    "pairable": bool(props.get("Pairable")),
-                    "path": f"/org/bluez/{name}",
-                })
+            out = bluez_adapters_from_managed(
+                {p: unpack_variants(ifaces) for p, ifaces in reply.body[0].items()})
         finally:
             with contextlib.suppress(Exception):
                 bus.disconnect()
@@ -340,9 +357,11 @@ def bt_adapters() -> list[dict]:
     (/sys/class/bluetooth, one dir per adapter, hci0-style names — no
     D-Bus, no root). Returns [] only when BOTH sources are empty —
     e.g. this dev box, a VM, or a genuinely absent radio (see
-    bt_diagnostics). The scan itself goes through bleak/BlueZ; if BlueZ
-    is missing the scan reports the error, which the UI turns into
-    INSTALL BLUETOOTH."""
+    bt_diagnostics). `name` is the D-Bus object name (hci0) in BOTH
+    paths — that is what bleak's bluez= adapter arg needs (it builds
+    /org/bluez/<name> from it); the MAC lives in `address` only.
+    The scan itself goes through bleak/BlueZ; if BlueZ is missing the
+    scan reports the error, which the UI turns into INSTALL BLUETOOTH."""
     out = _adapters_from_bluez()
     if out:
         return out
