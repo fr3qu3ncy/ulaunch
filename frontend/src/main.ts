@@ -329,14 +329,11 @@ function aboutContent(): HTMLElement {
   const lines = [
     'ulaunch@uconsole:~$ whoami',
     'ULAUNCH_ — network & system launcher',
-    '',
     'ulaunch@uconsole:~$ uname -a',
     `${aboutOs.system} ${aboutOs.release} (${aboutOs.machine})`,
-    '',
     'ulaunch@uconsole:~$ ulaunch --version',
     `v${aboutBuild.version || '?'} · build ${commit} · ${date}`,
     `uptime ${up} · local only · 127.0.0.1:8317`,
-    '',
     'access granted. welcome back, operator.',
   ]
   term.textContent = lines.join('\n')
