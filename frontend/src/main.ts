@@ -833,17 +833,37 @@ function applyUpdateButton(btn: HTMLElement) {
   }
 }
 
+/* version compare: "1.2" < "1.10" (numeric, not lexicographic) */
+function verLess(a: string, b: string): boolean | null {
+  const pa = a.split('.'), pb = b.split('.')
+  if (!pa.every(x => /^\d+$/.test(x)) || !pb.every(x => /^\d+$/.test(x))) return null
+  const n = Math.max(pa.length, pb.length)
+  for (let i = 0; i < n; i++) {
+    const x = Number(pa[i] ?? 0), y = Number(pb[i] ?? 0)
+    if (x !== y) return x < y
+  }
+  return false
+}
+
 /* Fill the settings "current / available" version lines from the last check.
-   Three states: checking (remote not fetched yet), up to date, or available. */
+   States: checking (remote not fetched yet), available, up to date — and
+   the stale-read case, where the last GitHub read is OLDER than the running
+   version (e.g. a manual pull ahead of the last successful fetch): show the
+   RUNNING version as latest, never the older remote number. */
 function paintUpdateInfo(cur: HTMLElement, next: HTMLElement) {
   const s = updateState
   cur.innerHTML = `CURRENT <b>${s?.local || '—'}</b>`
   if (s?.available) {
     next.className = 'update-new avail'
     next.innerHTML = `AVAILABLE <b>${s.remote}</b>`
-  } else if (s && s.remote_known) {
+  } else if (s && s.remote_known && s.local) {
+    const stale = verLess(s.remote, s.local) === true
     next.className = 'update-new'
-    next.innerHTML = `AVAILABLE <b>${s.remote}</b> <span class="dim">· latest</span>`
+    if (stale) {
+      next.innerHTML = `AVAILABLE <b>${s.local}</b> <span class="dim">· latest <span title="the last github read (version ${s.remote}) is older than the running version — it re-checks every minute">(stale read: ${s.remote})</span></span>`
+    } else {
+      next.innerHTML = `AVAILABLE <b>${s.local}</b> <span class="dim">· latest</span>`
+    }
   } else {
     next.className = 'update-new'
     next.innerHTML = 'AVAILABLE <b>…</b> <span class="dim">checking…</span>'

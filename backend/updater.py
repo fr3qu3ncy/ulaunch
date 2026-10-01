@@ -2,10 +2,13 @@
 
 The repo on GitHub is the source of truth for the version: the ``VERSION``
 file at the root of the repo is read at BUILD time (the vite build stamp
-bakes the number into the served bundle) and at RUN time (the running
-server reads the local file). ``check_for_update`` compares the local file
-against ``origin/main`` on GitHub using a background ``git fetch`` — so the
-endpoint never blocks the API on network latency.
+bakes the number into the served bundle) and at RUN time (frozen at process
+start — the version the server actually booted from, NOT the live file,
+which a manual ``git pull`` can change out from under a running server).
+``check_for_update`` compares the running version against ``origin/main``
+on GitHub using a background ``git fetch`` — so the endpoint never blocks
+the API on network latency. An update is only ever offered when upstream
+is strictly NEWER — never a downgrade.
 
 ``run_update`` does the actual upgrade, in a background thread, streaming
 every line of output into an in-memory log the UI polls:
@@ -76,12 +79,33 @@ FETCH_MIN_INTERVAL = 60.0  # don't hammer the network on every 15s refresh
 _outcome = "idle"
 
 
-def local_version() -> str:
-    """The version this server was started from (the file in the working tree)."""
+def _read_version_file() -> str:
     try:
         return VERSION_FILE.read_text().strip()
     except Exception:
         return ""
+
+
+# The version THIS PROCESS was started from — frozen at import time. The
+# VERSION file in the working tree can change out from under a running
+# server (a manual `git pull`), and reporting that file would make the
+# update check compare against code that isn't actually running. The
+# relaunch (in-app update or ./ulaunch restart) is what moves the running
+# version: the new process re-freezes at its own start.
+_STARTUP_VERSION = _read_version_file()
+
+
+def local_version() -> str:
+    """The version this server is actually running (frozen at boot)."""
+    return _STARTUP_VERSION
+
+
+def _parse_ver(v: str) -> tuple[int, ...] | None:
+    """`1.1.2` -> (1, 1, 2); None when it isn't a plain dotted number."""
+    parts = v.split(".")
+    if not parts or not all(p.isdigit() for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
 
 
 def _log_line(line: str) -> None:
@@ -150,7 +174,8 @@ def check_for_update() -> dict:
     answers immediately from the last known state. It fetches the URL into a
     stable LOCAL ref — it never touches the clone's ``origin`` remote, so a
     user's fork setup is left alone. ``available`` is True when the upstream
-    VERSION parses and differs from the local one. A dirty working tree is
+    VERSION parses and is STRICTLY NEWER than the running version (never a
+    downgrade). A dirty working tree is
     reported but does NOT block the update (git pull --ff-only would refuse,
     so the update itself shows why in the log).
     """
@@ -167,14 +192,20 @@ def check_for_update() -> dict:
 
     local = local_version()
     remote = _remote_version_cached()
+    lv, rv = _parse_ver(local), _parse_ver(remote)
     return {
         "local": local,
         "remote": remote,
         # False while the first fetch is still in flight (or it failed): the
-        # UI shows "checking…" and keeps the button disabled rather than
+        # UI shows "checking…" and keeps the button idle rather than
         # claiming "UP TO DATE" from a version we couldn't read.
         "remote_known": bool(remote),
-        "available": bool(remote) and bool(local) and remote != local,
+        # NEVER a downgrade: an update is only offered when the upstream
+        # version is strictly NEWER than the running one. A stale upstream
+        # read (e.g. the device manually pulled ahead of its last
+        # successful fetch, or the fetch has been failing) must not propose
+        # an older version.
+        "available": bool(lv and rv and rv > lv),
         "checked": _last_fetch_at is not None and _last_fetch_at != 0.0,
         "dirty": _worktree_dirty(),
     }
@@ -239,9 +270,20 @@ def _fetch_remote(repo: Path, url: str) -> None:
 
 def run_update() -> dict:
     """Start the update in a background thread (idempotent — a second call
-    while one is running is rejected by the endpoint)."""
+    while one is running is rejected by the endpoint).
+
+    Refuses to run when the last known upstream is not NEWER than the
+    running version — the UI only offers the button in that case, but the
+    endpoint is open and must not be able to trigger a pointless (or
+    worse, downgrading) update cycle from a stale upstream read."""
     if _update_lock.locked():
         return {"ok": False, "error": "update already running"}
+    local, remote = local_version(), _remote_version_cached()
+    lv, rv = _parse_ver(local), _parse_ver(remote)
+    if not (lv and rv and rv > lv):
+        return {"ok": False,
+                "error": f"no newer version to update to (running {local or '?'}, "
+                         f"upstream {remote or 'unknown'})"}
     global _outcome
     with _log_lock:
         _log.clear()
