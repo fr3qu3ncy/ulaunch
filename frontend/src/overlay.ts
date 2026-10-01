@@ -47,6 +47,19 @@ const C_MAGENTA = 'rgb(255, 46, 196)'   // scan tile (nmap)
 const C_CYAN = 'rgb(0, 245, 255)'       // SCAN COMPLETE
 const C_VIOLET = 'rgb(163, 94, 255)'    // wifi tile
 const C_RED = 'rgb(255, 59, 92)'        // bt tile
+/* matching glow per state — the CSS .standby rule carries a GREEN text-
+   shadow, so a state with a different colour must override it in JS or
+   the text glows the wrong colour (M31). */
+const GLOW = 0.9
+const S_GREEN = `rgba(61, 255, 158, ${GLOW})`
+const S_MAGENTA = `rgba(255, 46, 196, ${GLOW})`
+const S_CYAN = `rgba(0, 245, 255, ${GLOW})`
+const S_VIOLET = `rgba(163, 94, 255, ${GLOW})`
+const S_RED = `rgba(255, 59, 92, ${GLOW})`
+function stateStyle(color: string, glow: string) {
+  big!.style.color = color
+  big!.style.textShadow = `0 0 18px ${glow}`
+}
 
 function makeOverlay(): HTMLDivElement {
   const o = document.createElement('div')
@@ -130,19 +143,19 @@ function paintStatus() {
   sub.textContent = 'PRESS ANY KEY'
   if (scanRunning) {
     big.textContent = 'SCANNING'
-    big.style.color = C_MAGENTA
+    stateStyle(C_MAGENTA, S_MAGENTA)
   } else if (wifiScanning) {
     big.textContent = 'WIFI SCANNING'
-    big.style.color = C_VIOLET
+    stateStyle(C_VIOLET, S_VIOLET)
   } else if (btScanning) {
     big.textContent = 'BT SCANNING'
-    big.style.color = C_RED
+    stateStyle(C_RED, S_RED)
   } else if (Date.now() < completeUntil) {
     big.textContent = 'SCAN COMPLETE'
-    big.style.color = C_CYAN
+    stateStyle(C_CYAN, S_CYAN)
   } else {
     big.textContent = 'STANDBY'
-    big.style.color = C_GREEN
+    stateStyle(C_GREEN, S_GREEN)
   }
 }
 
