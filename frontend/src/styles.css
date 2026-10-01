@@ -1014,6 +1014,23 @@ html.kb-nav, html.kb-nav * { cursor: none !important; }
 }
 .overlay .standby .s2 { font-size: 1.1em; letter-spacing: 0.4em; color: var(--dim); text-shadow: none; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* phase 2 (battery): the canvas + pulse are off; the standby text is a
+   near-black ghost (opacity, so the JS-set state colours still read —
+   SCANNING / SCAN COMPLETE keep working in the dim view) and a faint
+   ULAUNCH_ watermark marks the screen. */
+.overlay .dim {
+  display: none;
+  position: absolute; left: 0; right: 0; bottom: 1.6em;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: 1.1em; font-weight: 700; letter-spacing: 0.55em;
+  color: rgba(61, 255, 158, 0.16);
+  pointer-events: none;
+}
+.overlay.dim .dim { display: block; }
+.overlay.dim canvas { display: none; }
+.overlay.dim .standby { opacity: 0.22; text-shadow: none; }
+.overlay.dim .standby .s1 { animation: none; }
 
 /* ── self-update (M28) ─────────────────────────────────────────
    Three surfaces follow the same state: a pulsing UPDATE stat in the

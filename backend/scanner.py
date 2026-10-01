@@ -125,6 +125,19 @@ class Scanner:
             return [self._public(j) for j in
                     sorted(self._jobs.values(), key=lambda j: j.started, reverse=True)]
 
+    def status(self) -> dict:
+        """Lightweight scan state for the idle overlay: is any job live, and
+        when did the newest job finish (epoch s; 0 = none yet). No job bodies."""
+        with self._lock:
+            running = any(j.status in ("pending", "running")
+                          for j in self._jobs.values())
+            newest = max((j for j in self._jobs.values() if j.finished),
+                         key=lambda j: j.finished, default=None)
+        return {
+            "running": running,
+            "last_finished": int(newest.finished) if newest else 0,
+        }
+
     def get(self, job_id: str) -> ScanJob | None:
         with self._lock:
             return self._jobs.get(job_id)

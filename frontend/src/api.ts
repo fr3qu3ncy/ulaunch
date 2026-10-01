@@ -167,6 +167,7 @@ export function systemAction(action: string) {
 
 export interface Settings {
   idle_timeout: number
+  idle_dim_timeout: number
   scan_flags: Record<string, unknown>
 }
 

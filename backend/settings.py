@@ -9,6 +9,7 @@ FILE = Path.home() / ".ulaunch" / "settings.json"
 
 DEFAULTS = {
     "idle_timeout": 60,          # seconds until the matrix overlay kicks in
+    "idle_dim_timeout": 120,     # seconds until the overlay dims (battery)
     "scan_flags": {              # default flags for new scans
         "deep": True,
         "service_version": True,
@@ -48,6 +49,11 @@ def set_all(payload: dict) -> dict:
                 cur["idle_timeout"] = max(10, min(3600, int(payload["idle_timeout"])))
             except (TypeError, ValueError):
                 raise ValueError("idle_timeout must be an integer")
+        if "idle_dim_timeout" in payload:
+            try:
+                cur["idle_dim_timeout"] = max(10, min(3600, int(payload["idle_dim_timeout"])))
+            except (TypeError, ValueError):
+                raise ValueError("idle_dim_timeout must be an integer")
         if "scan_flags" in payload and isinstance(payload["scan_flags"], dict):
             cur["scan_flags"] = {**cur["scan_flags"], **payload["scan_flags"]}
         FILE.parent.mkdir(parents=True, exist_ok=True)

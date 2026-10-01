@@ -692,6 +692,29 @@ function settingsContent(): HTMLElement {
   idleRow.appendChild(sel)
   c.appendChild(idleRow)
 
+  /* second phase: after this much MORE idle the animation stops and the
+     overlay goes to a near-black static screen (battery). Must be >= the
+     idle timeout for the animation to ever be seen, so clamp it up on
+     save (the server does the same). */
+  const dimRow = el('div', 'setting-row')
+  dimRow.appendChild(el('span', 'setting-label', 'DIM AFTER'))
+  const dimSel = el('select', 'select-input')
+  dimSel.tabIndex = 0
+  dimSel.dataset.fk = 'set:idle-dim'
+  for (const s of [60, 120, 300, 600, 900, 1800]) {
+    const o = el('option'); o.value = String(s); o.textContent = `${Math.round(s / 60)} minute${s >= 120 ? 's' : ''}`
+    dimSel.appendChild(o)
+  }
+  dimSel.addEventListener('change', async () => {
+    try {
+      const st = await putSettings({ idle_dim_timeout: Number(dimSel.value) })
+      overlay.setIdleDimTimeout(Math.max(st.idle_dim_timeout, st.idle_timeout))
+      flashSaved(c)
+    } catch (e: any) { window.alert(String(e?.message || e)) }
+  })
+  dimRow.appendChild(dimSel)
+  c.appendChild(dimRow)
+
   c.appendChild(el('div', 'section-title', 'SCAN DEFAULTS'))
   const flagLabels: [string, string][] = [
     ['deep', 'Deep scan (versions + scripts)'],
@@ -730,6 +753,7 @@ function settingsContent(): HTMLElement {
     settingsLoaded = true
     getSettings().then(st => {
       if (sel.isConnected) sel.value = String(st.idle_timeout)
+      if (dimSel.isConnected) dimSel.value = String(st.idle_dim_timeout)
       const f = st.scan_flags || {}
       for (const [key] of flagLabels) {
         const cb = document.getElementById(`flag-${key}`) as HTMLInputElement | null
@@ -1610,9 +1634,13 @@ tickClock()
 checkUpdate()
 setInterval(() => checkUpdate(), 60_000)
 
-/* idle screensaver — timeout comes from settings */
-overlay.initOverlay(60)
-getSettings().then(st => overlay.setIdleTimeout(st.idle_timeout)).catch(() => {})
+/* idle screensaver — timeouts come from settings (dim >= idle is clamped
+   up so the animation is never skipped entirely) */
+overlay.initOverlay(60, 120)
+getSettings().then(st => {
+  overlay.setIdleTimeout(st.idle_timeout)
+  overlay.setIdleDimTimeout(Math.max(st.idle_dim_timeout, st.idle_timeout))
+}).catch(() => {})
 
 /* window resizes change how much of the strip overflows — refresh the
    edge arrows */

@@ -320,6 +320,12 @@ def scan_subnets() -> dict:
     return {"options": res}
 
 
+@app.get("/api/scan/status")
+def scan_status() -> dict:
+    """Lightweight: running flag + newest job's finish time (idle overlay)."""
+    return scanner.status()
+
+
 @app.get("/api/scan/jobs")
 def scan_jobs() -> list:
     return scanner.jobs()
