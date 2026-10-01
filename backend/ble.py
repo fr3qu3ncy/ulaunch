@@ -222,6 +222,12 @@ class BleSession:
                 "devices": list(self.devices.values()),
             }
 
+    def overlay(self) -> dict:
+        """Lightweight state for the idle overlay: is the scan session live.
+        No devices — those are heavy while a scan is running."""
+        with self._lock:
+            return {"scanning": self.status == "running"}
+
 
 ble = BleSession()
 

@@ -2,12 +2,15 @@
  *  Phase 1 (idle): matrix rain, ~30fps, animated STANDBY text — battery
  *  hungry on purpose, only while the user is actually around.
  *  Phase 2 (dim, after idleDimS more idle): static black + faint
- *  "ULAUNCH_" + a one-shot "SCAN COMPLETE" flash in neon blue for 30s
- *  when a scan finished just before. No rAF, no CSS animation — near-zero
- *  CPU.
- *  Scan state (light /api/scan/status poll, 5s) drives the big text:
- *  running → SCANNING in the scan tile's magenta; done → SCAN COMPLETE
- *  neon blue for 30s; else STANDBY green. Same text in both phases.
+ *  "ULAUNCH_" — no rAF, no CSS animation, near-zero CPU.
+ *  Scan state (light status polls, 5s) drives the big text, in the
+ *  matching tool-tile colour:
+ *    wifi scan running  → WIFI SCANNING in the wifi tile's violet
+ *    bt scan running    → BT SCANNING in the bt tile's red
+ *    nmap job running   → SCANNING in the scan tile's magenta
+ *    nmap job done (30s)→ SCAN COMPLETE in neon blue
+ *    nothing            → STANDBY green
+ *  Same text in both phases.
  *  Any key/mouse/touch input wakes it (the waking input is swallowed). */
 
 const DEFAULT_TIMEOUT_S = 60
@@ -27,6 +30,8 @@ let timeoutS = DEFAULT_TIMEOUT_S
 let dimS = DEFAULT_DIM_S
 let lastActivity = Date.now()
 let scanRunning = false
+let wifiScanning = false
+let btScanning = false
 let completeUntil = 0
 let cols: number[] = []       // per-column row position (in glyph units)
 let colSpeeds: number[] = []
@@ -35,10 +40,13 @@ let lastFrame = 0
 const GLYPHS = 'アカサタナハマヤラワ0123456789ABCDEF<>/\\|=+*^-;:[]{}$#@%&'
 const GLYPH = 16
 /* big-text palette — same values as the CSS vars (overlay text is styled
-   in JS so it can change per state; keep in sync with styles.css) */
+   in JS so it can change per state; keep in sync with styles.css). Each
+   scanner uses its tool tile's accent colour. */
 const C_GREEN = 'rgb(61, 255, 158)'
-const C_MAGENTA = 'rgb(255, 46, 196)'
-const C_CYAN = 'rgb(0, 245, 255)'
+const C_MAGENTA = 'rgb(255, 46, 196)'   // scan tile (nmap)
+const C_CYAN = 'rgb(0, 245, 255)'       // SCAN COMPLETE
+const C_VIOLET = 'rgb(163, 94, 255)'    // wifi tile
+const C_RED = 'rgb(255, 59, 92)'        // bt tile
 
 function makeOverlay(): HTMLDivElement {
   const o = document.createElement('div')
@@ -110,14 +118,25 @@ function draw(t: number) {
   raf = requestAnimationFrame(draw)
 }
 
-/* Big-text state: running scan wins (SCANNING, scan-tile magenta), then a
-   fresh completion (SCAN COMPLETE, neon blue, 30s), then STANDBY green. */
+/* Big-text state: a running scanner wins, each in its tool tile's colour.
+   Fixed priority (nmap first — preserves M30's SCANNING, then the wireless
+   scanners): the overlay only knows each scanner's running flag (kept
+   lightweight), so it can't pick "most recently started" — a stable order
+   means a live nmap job always shows, and once it ends the still-running
+   wifi/bt session surfaces. Then a fresh nmap completion (SCAN COMPLETE,
+   neon blue, 30s); then STANDBY green. */
 function paintStatus() {
   if (!big || !sub) return
   sub.textContent = 'PRESS ANY KEY'
   if (scanRunning) {
     big.textContent = 'SCANNING'
     big.style.color = C_MAGENTA
+  } else if (wifiScanning) {
+    big.textContent = 'WIFI SCANNING'
+    big.style.color = C_VIOLET
+  } else if (btScanning) {
+    big.textContent = 'BT SCANNING'
+    big.style.color = C_RED
   } else if (Date.now() < completeUntil) {
     big.textContent = 'SCAN COMPLETE'
     big.style.color = C_CYAN
@@ -181,20 +200,25 @@ export function setIdleDimTimeout(s: number): void {
   if (visible && !dimmed && Date.now() - lastActivity > (timeoutS + dimS) * 1000) dimNow()
 }
 
-/* Lightweight scan state — no job bodies (that would be heavy on a
-   running deep scan). A job that finished within the last 30s shows
-   SCAN COMPLETE; a live job shows SCANNING. */
+/* One lightweight poll covering all three scanners (flags + finish time,
+   never the cell/device/job bodies — heavy while a scan is live). A nmap
+   job finished within the last 30s shows SCAN COMPLETE; a live scanner
+   shows its SCANNING state. */
 function pollScan() {
   if (document.hidden) return
-  fetch('/api/scan/status', { cache: 'no-store' })
+  fetch('/api/overlay/status', { cache: 'no-store' })
     .then(r => r.ok ? r.json() : null)
-    .then((st: { running: boolean; last_finished: number } | null) => {
+    .then((st: { scan: { running: boolean; last_finished: number };
+                 wifi: { scanning: boolean };
+                 ble: { scanning: boolean } } | null) => {
       if (!st) return
       const now = Date.now() / 1000
-      const running = st.running
-      const fresh = !running && st.last_finished > 0 && (now - st.last_finished) < COMPLETE_S
-      if (!running && fresh) completeUntil = st.last_finished * 1000 + COMPLETE_S * 1000
+      const running = st.scan.running
+      const fresh = !running && st.scan.last_finished > 0 && (now - st.scan.last_finished) < COMPLETE_S
+      if (!running && fresh) completeUntil = st.scan.last_finished * 1000 + COMPLETE_S * 1000
       scanRunning = running
+      wifiScanning = st.wifi.scanning
+      btScanning = st.ble.scanning
       if (visible) paintStatus()
     })
     .catch(() => {})
@@ -223,7 +247,7 @@ export function initOverlay(initialS: number = DEFAULT_TIMEOUT_S,
   dimS = Math.max(10, Math.min(3600, initialDimS))
   /* on-device debugging hook */
   ;(window as any).__ulaunchOverlay = () => ({
-    visible, dimmed, timeoutS, dimS, scanRunning,
+    visible, dimmed, timeoutS, dimS, scanRunning, wifiScanning, btScanning,
     completeInS: Math.max(0, Math.round((completeUntil - Date.now()) / 1000)),
     idleS: Math.round((Date.now() - lastActivity) / 1000),
     hidden: document.hidden, cols: cols.length,
@@ -237,6 +261,23 @@ export function initOverlay(initialS: number = DEFAULT_TIMEOUT_S,
     const fresh = !st.running && st.last_finished > 0 && (now - st.last_finished) < COMPLETE_S
     if (!st.running && fresh) completeUntil = st.last_finished * 1000 + COMPLETE_S * 1000
     scanRunning = st.running
+    if (visible) paintStatus()
+  }
+  /* control all three scanner states at once (harness): running flags for
+     the wireless scanners + the nmap job (running/last_finished). */
+  ;(window as any).__ulaunchOverlay_setScanStates = (st: {
+    scan?: { running: boolean; last_finished: number }
+    wifi?: { scanning: boolean }
+    ble?: { scanning: boolean }
+  }) => {
+    if (st.scan) {
+      const now = Date.now() / 1000
+      const fresh = !st.scan.running && st.scan.last_finished > 0 && (now - st.scan.last_finished) < COMPLETE_S
+      if (!st.scan.running && fresh) completeUntil = st.scan.last_finished * 1000 + COMPLETE_S * 1000
+      scanRunning = st.scan.running
+    }
+    if (st.wifi) wifiScanning = st.wifi.scanning
+    if (st.ble) btScanning = st.ble.scanning
     if (visible) paintStatus()
   }
   overlay = makeOverlay()

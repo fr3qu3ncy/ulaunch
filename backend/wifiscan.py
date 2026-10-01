@@ -267,5 +267,11 @@ class WifiSession:
                 "cells": cells,
             }
 
+    def overlay(self) -> dict:
+        """Lightweight state for the idle overlay: is the scan session live.
+        No cells — those are heavy while a scan is running."""
+        with self._lock:
+            return {"scanning": self.status == "running"}
+
 
 wifi = WifiSession()

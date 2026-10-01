@@ -326,6 +326,22 @@ def scan_status() -> dict:
     return scanner.status()
 
 
+@app.get("/api/overlay/status")
+def overlay_status() -> dict:
+    """One lightweight call covering ALL three scanners for the idle overlay —
+    the overlay polls this every 5s, so it must stay small: flags + finish
+    time only, never the cell/device/job bodies (those endpoints carry them
+    and are heavy while a scan is live).
+      scan → nmap job(s)   {running, last_finished}
+      wifi → wifi session  {scanning}
+      ble  → ble session   {scanning}"""
+    return {
+        "scan": scanner.status(),
+        "wifi": wifi.overlay(),
+        "ble": ble.overlay(),
+    }
+
+
 @app.get("/api/scan/jobs")
 def scan_jobs() -> list:
     return scanner.jobs()
