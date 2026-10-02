@@ -798,10 +798,10 @@ html.kb-nav, html.kb-nav * { cursor: none !important; }
   gap: 0.8em; align-items: baseline;
   padding: 0.4em 0.5em;
   border-radius: 4px;
-  font-size: 1.15em;
+  font-size: 1.3em;
 }
 .port-row-head {
-  color: var(--dim); font-size: 0.9em; letter-spacing: 0.14em;
+  color: var(--dim); font-size: 1em; letter-spacing: 0.14em;
   text-transform: uppercase; font-weight: 700;
 }
 .port-row.open { background: rgba(0, 245, 255, 0.05); }
@@ -810,14 +810,15 @@ html.kb-nav, html.kb-nav * { cursor: none !important; }
 .port-row.filtered .p-port { color: var(--dim); }
 .port-row .p-svc { font-weight: 600; }
 /* DETAIL is script output — primary content, not decoration: readable
-   text colour (M20: was the near-invisible --dim) */
-.port-row .p-detail { color: var(--text); font-size: 1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+   text colour (M20: was the near-invisible --dim); M33: inherits the
+   row's 1.3em (was a 1em override — too small on the uConsole) */
+.port-row .p-detail { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* per-IP drill-down hint on the host cards (M21) */
+/* per-IP drill-down hint on the host cards (M21) — M33: bigger, readable */
 .scan-host-enter {
   margin-left: 1em;
   font-family: var(--font-display);
-  font-size: 0.62em; font-weight: 700; letter-spacing: 0.2em;
+  font-size: 0.75em; font-weight: 700; letter-spacing: 0.2em;
   color: var(--dim); text-transform: uppercase;
 }
 .scan-host-card:focus-visible .scan-host-enter,
@@ -825,7 +826,7 @@ html.kb-nav, html.kb-nav * { cursor: none !important; }
 .scan-host-card-meta {
   margin-top: 0.25em;
   font-family: var(--font-display);
-  font-size: 0.62em; font-weight: 600; letter-spacing: 0.18em;
+  font-size: 0.75em; font-weight: 600; letter-spacing: 0.18em;
   color: var(--dim); text-transform: uppercase;
 }
 .scan-host-card:focus-visible .scan-host-card-meta { color: var(--soft); }
@@ -847,13 +848,13 @@ html.kb-nav, html.kb-nav * { cursor: none !important; }
 .host-port.filtered .hport-num { color: var(--dim); }
 .hport-state {
   font-family: var(--font-display);
-  font-size: 0.85em; font-weight: 700; letter-spacing: 0.18em;
+  font-size: 1em; font-weight: 700; letter-spacing: 0.18em;
 }
 .hport-state.open { color: var(--green); text-shadow: 0 0 8px rgba(61, 255, 158, 0.5); }
 .hport-state.closed, .hport-state.filtered { color: var(--dim); }
-.hport-svc { font-size: 1.1em; font-weight: 600; color: var(--text); }
-.hport-reason { font-size: 0.95em; color: var(--soft); }
-.hport-extra { font-size: 1.05em; color: var(--soft); }
+.hport-svc { font-size: 1.2em; font-weight: 600; color: var(--text); }
+.hport-reason { font-size: 1.1em; color: var(--soft); }
+.hport-extra { font-size: 1.2em; color: var(--soft); }
 .host-script {
   border-left: 2px solid var(--panel-line);
   padding-left: 0.9em;
@@ -861,13 +862,13 @@ html.kb-nav, html.kb-nav * { cursor: none !important; }
 }
 .host-script-id {
   font-family: var(--font-display);
-  font-size: 0.8em; font-weight: 700; letter-spacing: 0.16em;
+  font-size: 0.95em; font-weight: 700; letter-spacing: 0.16em;
   color: var(--magenta); text-transform: uppercase;
 }
 .host-script-out {
   margin: 0;
   font-family: monospace;
-  font-size: 1em; line-height: 1.4;
+  font-size: 1.15em; line-height: 1.4;
   color: var(--soft);
   white-space: pre-wrap; word-break: break-word;
   background: rgba(0, 0, 0, 0.4);
