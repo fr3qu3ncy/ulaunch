@@ -98,6 +98,11 @@ export function mountScan(container: HTMLElement): ScanHandle {
   let selIp: string | null = null /* detail view: which IP is drilled into */
   let options: SubnetOption[] = []
   let selIndex = 0
+  /* CUSTOM RANGE: a hand-typed nmap target spec (CIDR, host range, or a
+     comma/space list of either) — rendered as an extra option below the
+     NIC list. The value persists across re-renders + NEW SCAN. */
+  let customRange = ''
+  const customIndex = () => options.length
   let flags: ScanFlags = { ...DEFAULT_FLAGS }
   let jobStarted = false
   let nmapInstalled: boolean | null = null
@@ -150,6 +155,7 @@ export function mountScan(container: HTMLElement): ScanHandle {
     c.appendChild(el('div', 'section-title', 'SELECT NETWORK'))
 
     const list = el('div', 'scan-opt-list')
+    const isCustom = selIndex === customIndex()
     options.forEach((o, i) => {
       const b = el('button', `scan-opt ${i === selIndex ? 'active' : ''}`)
       b.tabIndex = 0
@@ -159,9 +165,54 @@ export function mountScan(container: HTMLElement): ScanHandle {
       head.appendChild(el('span', `c-type ${o.type}`, o.type))
       b.appendChild(head)
       b.appendChild(el('span', 'scan-opt-sub', `${o.subnet}  ·  ${o.ipv4}`))
-      b.addEventListener('click', () => { selIndex = i; render() })
+      b.addEventListener('click', () => {
+        selIndex = i
+        render()
+        /* re-focus the (rebuilt) button so the keyboard stays on it */
+        root.querySelector<HTMLElement>(`[data-fk="opt:${i}"]`)?.focus()
+      })
       list.appendChild(b)
     })
+    /* CUSTOM RANGE — an extra option below the NICs. Selecting it reveals
+       a text input for any nmap target spec: CIDR (192.168.1.0/24), host
+       range (192.168.1.0-100), or a comma/space list of either
+       (192.168.1.10 10.10.11.10). The input is a keyboard stop (arrows
+       own the caret while it is focused — isTextInput in main.ts). */
+    if (options.length > 0) {
+      const cb = el('button', `scan-opt scan-opt-custom ${isCustom ? 'active' : ''}`)
+      cb.tabIndex = 0
+      cb.dataset.fk = 'opt:custom'
+      const chead = el('span', 'scan-opt-head')
+      chead.innerHTML = `<span class="dot"></span><b>CUSTOM RANGE</b>`
+      chead.appendChild(el('span', 'c-type virtual', 'manual'))
+      cb.appendChild(chead)
+      cb.appendChild(el('span', 'scan-opt-sub', 'CIDR or host range — any target nmap accepts'))
+      cb.addEventListener('click', () => {
+        selIndex = customIndex()
+        render()
+        /* the point of picking CUSTOM RANGE is to type a range — put the
+           cursor straight into the input (render() restores focus to the
+           button by fk; override it here) */
+        root.querySelector<HTMLElement>('[data-fk="custom"]')?.focus()
+      })
+      list.appendChild(cb)
+      if (isCustom) {
+        const inp = el('input', 'text-input scan-custom-input')
+        inp.type = 'text'
+        inp.spellcheck = false
+        inp.autocomplete = 'off'
+        inp.placeholder = 'e.g. 192.168.1.0/24  ·  192.168.1.0-100  ·  192.168.1.10 10.10.11.10'
+        inp.title = 'Any nmap target spec: CIDR, host range, or a comma/space list of either'
+        inp.dataset.fk = 'custom'
+        inp.tabIndex = 0
+        inp.value = customRange
+        inp.addEventListener('input', () => { customRange = inp.value })
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); void startScan() }
+        })
+        list.appendChild(inp)
+      }
+    }
     c.appendChild(list)
 
     c.appendChild(el('div', 'section-title', 'SCAN OPTIONS'))
@@ -246,14 +297,34 @@ export function mountScan(container: HTMLElement): ScanHandle {
       alert('nmap is not installed — press INSTALL NMAP first')
       return
     }
+    if (selIndex === customIndex()) {
+      /* CUSTOM RANGE: a hand-typed nmap target spec. Validate locally
+         against the same rules the server enforces (scanner.valid_nmap_spec)
+         so an empty/typo'd range never starts a doomed job. */
+      const spec = customRange.trim()
+      if (!spec || !localValidSpec(spec)) {
+        const inp = root.querySelector<HTMLElement>('[data-fk="custom"]')
+        if (inp) inp.focus()
+        alert(spec
+          ? 'invalid range — use a CIDR (192.168.1.0/24), a host range (192.168.1.0-100), or a comma/space list of either'
+          : 'enter a range first, e.g. 192.168.1.0/24 or 192.168.1.0-100')
+        return
+      }
+      void beginScan(spec, 'custom range', { ...flags })
+      return
+    }
     const opt = options[selIndex]
     if (!opt) return
+    void beginScan(opt.subnet, opt.name, flags)
+  }
+
+  async function beginScan(subnet: string, ifaceName: string, fl: ScanFlags) {
     try {
       const r = await fetch('/api/scan/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          subnet: opt.subnet, interface: opt.name, flags,
+          subnet, interface: ifaceName, flags: fl,
         }),
       })
       if (!r.ok) throw new Error((await r.json()).detail || 'start failed')
@@ -268,6 +339,32 @@ export function mountScan(container: HTMLElement): ScanHandle {
     } catch (e: any) {
       alert(String(e.message || e))
     }
+  }
+
+  /* mirrors scanner.valid_nmap_spec (server-side) — the same nmap forms,
+     checked before we POST so a bad range never starts a job. Whitespace
+     separates the targets; each one is a CIDR or a 4-field address where
+     every field is a number, a range (a-b), or a comma list of those. */
+  function localValidSpec(spec: string): boolean {
+    const parts = spec.trim().split(' ').filter(Boolean)
+    if (!parts.length) return false
+    const field = (f: string) => {
+      if (!/^(\d{1,3}(-\d{1,3})?)(,\d{1,3}(-\d{1,3})?)*$/.test(f)) return false
+      for (const el of f.split(',')) {
+        const nums = el.split('-').map(Number)
+        if (nums.some(n => n > 255)) return false
+        if (el.includes('-') && nums[0] > nums[1]) return false
+      }
+      return true
+    }
+    return parts.every(p => {
+      const cidr = p.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,2})$/)
+      if (cidr) {
+        return cidr[1].split('.').every(o => Number(o) <= 255) && Number(cidr[2]) <= 32
+      }
+      const fields = p.split('.')
+      return fields.length === 4 && fields.every(field)
+    })
   }
 
   function connectWs(id: string) {

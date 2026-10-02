@@ -17,6 +17,80 @@ from dataclasses import dataclass, field
 
 STAGES = ("discovery", "ports", "deep")
 
+# ── nmap target specs ────────────────────────────────────────────
+# A custom range is one or more nmap target expressions separated by
+# whitespace. Each expression is passed to nmap as its OWN argument — exactly
+# like typing `nmap 192.168.1.10 10.10.11.10` on the command line, where the
+# shell splits on spaces and nmap takes each as a separate target. (Verified
+# against nmap 7.95: the space list is REJECTED if passed as a single quoted
+# argument, but works when split.)
+#
+# A single target expression is one of:
+#   * a CIDR block:  192.168.1.0/24  (4 octets + /0-32). nmap 7.95 rejects the
+#     legacy /255.255.255.0 netmask form, so we don't accept it either.
+#   * a 4-field address where each field is a number, a range (a-b), or a
+#     comma list of those. This covers a single host (192.168.1.10), a
+#     last-octet range (192.168.1.0-100), a multi-octet range
+#     (192.168.0-29.0-45), and a comma list (192.168.1.1,3,5 /
+#     10.10.11,12.1-254).
+#
+# We validate each expression so a typo never silently scans 0 hosts (nmap is
+# dangerously lenient: `junk` and `300.1.1.1` both "succeed" with 0 hosts).
+# We deliberately require the full 4-field form — the short forms nmap also
+# accepts (e.g. 10.10.11, which nmap reads as the single host 10.10.0.11) are
+# a footgun and are rejected here.
+_CIDR_RE = re.compile(r"^(\d{1,3}\.){3}\d{1,3}/(\d{1,2})$")
+_FIELD_RE = re.compile(r"^(\d{1,3}(-\d{1,3})?)(,\d{1,3}(-\d{1,3})?)*$")
+
+
+def _valid_target(expr: str) -> bool:
+    """True if expr is ONE valid nmap target expression (no internal spaces)."""
+    if not expr:
+        return False
+    if "/" in expr:
+        m = _CIDR_RE.match(expr)
+        if not m:
+            return False
+        octets = expr.split("/", 1)[0].split(".")
+        if len(octets) != 4 or not all(
+                o.isdigit() and 0 <= int(o) <= 255 for o in octets):
+            return False
+        return 0 <= int(m.group(2)) <= 32
+    fields = expr.split(".")
+    if len(fields) != 4:
+        return False
+    for f in fields:
+        if not _FIELD_RE.match(f):
+            return False
+        for element in f.split(","):
+            if "-" in element:
+                lo, hi = element.split("-", 1)
+                if not (lo.isdigit() and hi.isdigit()):
+                    return False
+                if not (0 <= int(lo) <= 255 and 0 <= int(hi) <= 255):
+                    return False
+                if int(lo) > int(hi):
+                    return False
+            elif not (element.isdigit() and 0 <= int(element) <= 255):
+                return False
+    return True
+
+
+def valid_nmap_spec(spec: str) -> bool:
+    """Validate a custom range: one or more nmap target expressions separated
+    by whitespace. Returns False on empty/invalid input so the UI refuses to
+    start a scan that would silently scan 0 hosts."""
+    spec = (spec or "").strip()
+    if not spec:
+        return False
+    return all(_valid_target(p) for p in spec.split())
+
+
+def nmap_target_args(spec: str) -> list[str]:
+    """Split a range into the separate nmap target arguments (one per
+    whitespace-separated expression) — matching how nmap's CLI takes targets."""
+    return (spec or "").split()
+
 
 @dataclass
 class ScanJob:
@@ -245,7 +319,9 @@ class Scanner:
         job.stage = "discovery"
         job.stage_index = 0
         job.publish("discovery", f"stage 1/3 — host discovery on {job.subnet}")
-        xml = self._nmap(job, ["-sn", job.subnet])
+        # A custom range can hold multiple whitespace-separated targets — pass
+        # each as its own nmap argument (nmap 7.95 rejects them as one arg).
+        xml = self._nmap(job, ["-sn", *nmap_target_args(job.subnet)])
         if xml is None:
             return
         data = parse_nmap_xml(xml)

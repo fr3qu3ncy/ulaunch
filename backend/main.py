@@ -21,7 +21,7 @@ import vpn
 import settings
 import system
 from net import gather_net
-from scanner import scanner
+from scanner import scanner, valid_nmap_spec
 from wifiscan import wifi, wireless_adapters, iwlist_installed, probe_scan
 from ble import (ble, bt_adapters, bluetooth_available, bt_diagnostics,
                  restart_bluetooth, power_adapter)
@@ -371,11 +371,10 @@ def scan_start(payload: dict) -> dict:
     subnet = (payload or {}).get("subnet", "")
     iface = (payload or {}).get("interface", "")
     flags = (payload or {}).get("flags", {}) or {}
-    import ipaddress
-    try:
-        ipaddress.ip_network(subnet, strict=False)
-    except ValueError:
-        raise HTTPException(400, f"not a valid subnet: {subnet!r}")
+    # accepts CIDR, host ranges, and comma/space-separated lists of
+    # either (the CUSTOM RANGE option) — see valid_nmap_spec in scanner.py
+    if not valid_nmap_spec(subnet):
+        raise HTTPException(400, f"not a valid nmap target: {subnet!r}")
     if not flags:
         flags = {"deep": True, "service_version": True, "scripts": True,
                  "udp": False, "full_tcp": False, "udp_top": 100}
