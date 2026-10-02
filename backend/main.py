@@ -23,6 +23,7 @@ import system
 from net import gather_net
 from scanner import scanner, valid_nmap_spec
 from wifiscan import wifi, wireless_adapters, iwlist_installed, probe_scan
+import wificonnect
 from ble import (ble, bt_adapters, bluetooth_available, bt_diagnostics,
                  restart_bluetooth, power_adapter)
 from sudo import SudoRequired, sudo
@@ -437,6 +438,70 @@ def wifi_scan_reset() -> dict:
     """Test hook: stop and clear the session."""
     wifi.reset()
     return {"ok": True}
+
+
+# ── wifi connect (nmcli) ───────────────────────────────────────
+# Joins a network from the NETWORK screen. The passphrase is supplied
+# in-app and stored in a 0600 file under ~/.ulaunch/ (never returned by
+# the API). Listing is unprivileged (Network Manager allows unprivileged
+# `dev wifi list`), so the UI's refresh needs no sudo; only
+# connect/disconnect are privileged — a 401 there pops the sudo modal.
+
+@app.get("/api/wifi-connect")
+def wifi_connect_list() -> dict:
+    try:
+        return wificonnect.list_networks()
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/wifi-connect/connect")
+def wifi_connect_do(payload: dict) -> dict:
+    body = payload or {}
+    try:
+        return wificonnect.connect(
+            body.get("ssid", ""), body.get("passphrase") or None)
+    except SudoRequired:
+        raise HTTPException(401, "sudo password required")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/wifi-connect/disconnect")
+def wifi_connect_down() -> dict:
+    try:
+        return wificonnect.disconnect()
+    except SudoRequired:
+        raise HTTPException(401, "sudo password required")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/wifi-connect/status")
+def wifi_connect_status() -> dict:
+    return wificonnect.status()
+
+
+@app.delete("/api/wifi-connect/{ssid}")
+def wifi_connect_forget(ssid: str) -> dict:
+    """Forget a saved network (drops the stored passphrase)."""
+    try:
+        ok = wificonnect.forget(ssid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not ok:
+        raise HTTPException(404, "network not saved")
+    return {"ok": True}
+
+
+@app.post("/api/tools/install-wifi")
+def wifi_connect_install() -> dict:
+    try:
+        return wificonnect.install()
+    except SudoRequired:
+        raise HTTPException(401, "sudo password required")
+    except ValueError as e:
+        raise HTTPException(500, str(e))
 
 
 # ── bluetooth (BLE) scan ────────────────────────────────────────

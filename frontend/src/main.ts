@@ -11,6 +11,7 @@ import {
 } from './api'
 import { mountScan, type ScanHandle } from './scan'
 import { mountWifi, type WifiHandle } from './wifi'
+import { mountWifiNet, type WifiNetHandle } from './wifinet'
 import { mountBle, type BleHandle } from './ble'
 import * as overlay from './overlay'
 import * as update from './update'
@@ -48,6 +49,12 @@ let vpnOpenvpnInstalled: boolean | null = null
 let vpnLogTimer: number | null = null
 let scanHandle: ScanHandle | null = null
 let wifiHandle: WifiHandle | null = null
+let wifiNetHandle: WifiNetHandle | null = null
+/* set by go('network') right before render(): the NETWORK component paints
+   async, so the mount needs to KNOW the user entered via Enter (claim focus
+   on first paint) — as opposed to a re-render where focus must be restored
+   or left alone. Cleared by render() once the mount has consumed it. */
+let screenEnteredByUser = false
 let bleHandle: BleHandle | null = null
 
 /* self-update state: the last known comparison against GitHub. `null`
@@ -258,55 +265,6 @@ function stepTile(dir: 1 | -1) {
     : (idx + dir + tiles.length) % tiles.length
   tiles[next].focus({ preventScroll: true })
   revealTile(tiles[next])
-}
-
-/* ───────────────────────── HOME ───────────────────────── */
-function ifaceCard(i: NetInfo['interfaces'][number]): HTMLElement {
-  const c = el('div', 'card')
-  const typeCls = !i.up ? 'down' : i.type
-  const head = el('div', 'c-head')
-  head.appendChild(el('span', 'dot ' + (i.up ? 'on' : '')))
-  head.appendChild(el('span', 'c-name', i.name))
-  head.appendChild(el('span', `c-type ${typeCls}`, !i.up ? 'DOWN' : i.type))
-  c.appendChild(head)
-  if (i.type === 'wifi' && i.up) {
-    const sub = el('div', 'c-sub')
-    sub.innerHTML = i.ssid ? `SSID <b>${i.ssid}</b>${i.signal !== null ? ` · ${i.signal}%` : ''}` : 'connected'
-    c.appendChild(sub)
-  }
-  if (i.ipv4) {
-    const ip = el('div', 'c-sub'); ip.innerHTML = `IP <b>${i.ipv4.addr}</b>`
-    const netd = el('div', 'c-sub'); netd.innerHTML = `NET <b>${i.ipv4.subnet}</b>`
-    c.appendChild(ip)
-    c.appendChild(netd)
-  } else if (i.up) {
-    c.appendChild(el('div', 'c-sub', 'no IPv4 address'))
-  }
-  c.appendChild(el('div', 'c-sub', `STATE ${i.state}`))
-  return c
-}
-
-function homeContent(net: NetInfo | null): HTMLElement {
-  const c = el('div', 'content')
-  if (!net) { c.appendChild(el('div', 'soon', 'connecting…')); return c }
-  c.appendChild(el('div', 'section-title', 'INTERFACES'))
-  const cards = el('div', 'cards')
-  for (const i of net.interfaces) cards.appendChild(ifaceCard(i))
-  c.appendChild(cards)
-  if (net.vpn.active) {
-    c.appendChild(el('div', 'section-title', 'VPN'))
-    const vc = el('div', 'cards')
-    const card = el('div', 'card active')
-    const head = el('div', 'c-head')
-    head.appendChild(el('span', 'dot on'))
-    head.appendChild(el('span', 'c-name', 'TUNNEL'))
-    head.appendChild(el('span', 'c-type vpn', 'CONNECTED'))
-    card.appendChild(head)
-    card.appendChild(el('div', 'c-sub', net.vpn.interfaces.join(', ')))
-    vc.appendChild(card)
-    c.appendChild(vc)
-  }
-  return c
 }
 
 /* ───────────────────────── ABOUT (logo → the hacker screen) ───────────────────────── */
@@ -966,7 +924,20 @@ function render() {
        the sweep with zero scrollBy/scrollTo calls — only this setter. */
     strip.scrollTo({ left: prevScroll, behavior: 'instant' })
   }
-  if (screen === 'network') app.appendChild(homeContent(lastNet))
+  if (screen === 'network') {
+    /* the network screen is a mounted tool (interface cards + the wifi
+       connect section) that owns its own data + in-place refresh — like
+       scan/wifi/bt, so the 15s global refresh only updates the header.
+       autoFocus: the component paints async (load() resolves a tick later),
+       so the initial focus is CLAIMED BY THE COMPONENT on first paint —
+       go()'s focusContentFirst() would otherwise run against the still-empty
+       holder. At boot go() is never called (screen starts as 'network'), so
+       the boot mount keeps autoFocus=false and must not steal the tile focus. */
+    const holder = el('div', 'content wifinet-holder')
+    app.appendChild(holder)
+    wifiNetHandle = mountWifiNet(holder, screenEnteredByUser)
+    screenEnteredByUser = false
+  }
   else if (screen === 'about') app.appendChild(aboutContent())
   else if (screen === 'vpn') app.appendChild(vpnContent())
   else if (screen === 'scan') {
@@ -1084,6 +1055,8 @@ function rowEntryTile(): HTMLElement | null {
 async function go(s: Screen) {
   const prev = screen
   screen = s
+  if (s === 'network' && prev !== 'network') screenEnteredByUser = true
+  if (prev === 'network') { wifiNetHandle?.destroy(); wifiNetHandle = null }
   if (prev === 'scan') { scanHandle?.destroy(); scanHandle = null }
   if (prev === 'wifi') { wifiHandle?.destroy(); wifiHandle = null }
   if (prev === 'bt') { bleHandle?.destroy(); bleHandle = null }
@@ -1091,17 +1064,12 @@ async function go(s: Screen) {
   if (s === 'vpn') { await refreshVpn(); startLogPoll() }
   if (prev === 'vpn') stopLogPoll()
   /* ABOUT has no content controls — focus stays on the logo.
-     NETWORK is display-only (like the old home) — focus lands on its
-     tile, so arrows can walk the row and Enter on the tile re-enters.
-     Every other tool: drop focus into its first control.
-     For SCAN the options load async — mountScan owns the initial focus. */
+     Every other tool (NETWORK included — it's now a mounted tool with the
+     wifi connect section): drop focus into its first control.
+     For SCAN the options load async — mountScan owns the initial focus;
+     the NETWORK component owns its own initial focus too. */
   if (s === 'about') app.querySelector<HTMLElement>('.logo')?.focus()
-  else if (s === 'network') {
-    const t = app.querySelector<HTMLElement>('.nav-strip .tile[data-screen="network"]')
-    t?.focus({ preventScroll: true })
-    if (t) revealTile(t)
-  }
-  else if (s !== 'scan') focusContentFirst()
+  else focusContentFirst()
 }
 
 async function doExit(action: 'desktop' | 'hide' | 'exit') {
@@ -1308,6 +1276,8 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
   document.documentElement.classList.add('kb-nav')
   if (document.getElementById('sudo-modal') ||
       document.getElementById('creds-modal') ||
+      document.getElementById('wifi-pass-modal') ||
+      document.getElementById('wifi-confirm-modal') ||
       document.getElementById('update-overlay')) return /* modal owns keys */
 
   /* ── standby (Esc) menu: arrows/Tab move between its buttons ── */
@@ -1402,6 +1372,14 @@ document.addEventListener('keydown', (e: KeyboardEvent) => {
     /* host card / row in the scan results: drill into the per-IP detail
        view (M21) instead of the native button activation */
     if (t && (t.classList.contains('scan-host-card') || t.classList.contains('scan-host'))) {
+      e.preventDefault()
+      t.click()
+      return
+    }
+    /* wifi connect row (M34): the row is a [tabindex=0] div, so Enter does
+       NOT activate it natively (unlike buttons) — fire its click handler,
+       same pattern as the scan host cards */
+    if (t && t.classList.contains('wifinet-row')) {
       e.preventDefault()
       t.click()
       return
@@ -1594,13 +1572,15 @@ async function refresh() {
     const first = !lastNet
     lastNet = net
     if (screen === 'vpn' || screen === 'scan' || screen === 'wifi'
-        || screen === 'bt' || screen === 'system' || screen === 'settings') {
-      /* update only the items that need it — the live header stats. VPN
-         and SCAN update their own content (log poller / WebSocket), and
-         SYSTEM and SETTINGS are static once loaded (power buttons never
-         change; settings save immediately on change) — a full render()
-         here would needlessly rebuild the power section / reset the
-         settings controls under the user. */
+        || screen === 'bt' || screen === 'system' || screen === 'settings'
+        || screen === 'network') {
+      /* update only the items that need it — the live header stats. VPN,
+         SCAN, WIFI, BT and NETWORK update their own content (log poller /
+         WebSocket / the component's own 10s poll), and SYSTEM and SETTINGS
+         are static once loaded — a full render() here would needlessly
+         rebuild the power section / reset the settings controls / remount
+         the network component (which would steal focus from the icon bar)
+         under the user. */
       refreshHeaderStats(net)
     } else {
       render()

@@ -1140,3 +1140,78 @@ html.kb-nav, html.kb-nav * { cursor: none !important; }
   text-shadow: 0 0 24px rgba(61, 255, 158, 0.9);
   animation: pulse 1.1s ease-in-out infinite;
 }
+
+/* ── network screen: wifi connect (M34) ───────────────────────
+   The NETWORK screen is a mounted tool: the interface cards above
+   (display-only, the card system) + the WIFI NETWORKS section below.
+   Each available network is a keyboard stop — Enter (or clicking the
+   row) connects it. The row's "CONNECT ›" hint is a visual affordance,
+   not a separate control (the row IS the control). */
+.wifinet-list { display: flex; flex-direction: column; gap: 0.7em; }
+.wifinet-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: 'head act' 'meta act';
+  gap: 0.25em 1em;
+  align-items: center;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 8px;
+  padding: 0.6em 1.1em;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.12s ease;
+}
+.wifinet-row-head { grid-area: head; display: flex; align-items: baseline; gap: 1em; flex-wrap: wrap; }
+.wifinet-ssid {
+  font-family: var(--font-display);
+  font-size: 1.35em; font-weight: 700;
+}
+.wifinet-row-meta {
+  grid-area: meta;
+  font-family: monospace;
+  font-size: 1.2em; line-height: 1.5;
+  color: var(--soft);
+}
+.wifinet-row-meta b { color: var(--text); }
+.wifinet-row-act {
+  grid-area: act;
+  font-family: var(--font-display);
+  font-size: 1em; font-weight: 700; letter-spacing: 0.14em;
+  color: var(--cyan);
+  text-shadow: 0 0 8px rgba(0, 245, 255, 0.5);
+}
+.wifinet-row:hover, .wifinet-row:focus-visible {
+  border-color: rgba(0, 245, 255, 0.55);
+  box-shadow: 0 0 12px rgba(0, 245, 255, 0.25);
+}
+.wifinet-row:focus-visible { outline: 3px dashed rgba(255, 255, 255, 0.9); outline-offset: 3px; }
+.wifinet-row.busy { opacity: 0.6; cursor: wait; }
+.wifinet-row.busy .wifinet-row-act { animation: pulse 1.2s ease-in-out infinite; }
+/* saved networks — slightly warmer, they're "ours" */
+.wifinet-saved-row { border-color: rgba(61, 255, 158, 0.3); }
+.wifinet-saved {
+  font-family: var(--font-display);
+  font-size: 0.9em; font-weight: 700; letter-spacing: 0.14em;
+  color: var(--green); text-shadow: 0 0 8px rgba(61, 255, 158, 0.5);
+}
+/* the connected card reuses .card (active = the cyan glow); the DISCONNECT
+   row sits below it. The wifi-lock badges are shared with the WIFI tool. */
+/* in-app error flash (replaces browser alert()) — a small red banner, bottom-
+   center, NON-modal (never takes the keyboard or focus), auto-dismisses. */
+.wifinet-err {
+  position: fixed;
+  left: 50%; bottom: 1.6em;
+  transform: translateX(-50%);
+  z-index: 200;
+  max-width: 80vw;
+  padding: 0.7em 1.4em;
+  background: rgba(30, 6, 12, 0.96);
+  border: 1px solid rgba(255, 59, 92, 0.6);
+  border-radius: 8px;
+  box-shadow: 0 0 24px rgba(255, 59, 92, 0.25);
+  font-family: monospace;
+  font-size: 1.05em; letter-spacing: 0.03em;
+  color: #ffb3c2;
+  text-shadow: 0 0 8px rgba(255, 59, 92, 0.5);
+}

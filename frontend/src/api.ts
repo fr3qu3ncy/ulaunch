@@ -130,6 +130,63 @@ export function toolsInstall(tool: string) {
   return postJSON('/api/tools/install', { tool })
 }
 
+export function wifiConnectInstall() {
+  return postJSON('/api/tools/install-wifi', {})
+}
+
+/* ── wifi connect (nmcli) ─────────────────────────────── */
+export interface WifiConnectCell {
+  ssid: string
+  channel: number | null
+  signal: number | null
+  security: string
+  open: boolean
+  saved: boolean
+}
+
+export interface WifiConnectConnected {
+  ssid: string
+  signal: number | null
+  security: string
+  open: boolean
+  saved: boolean
+}
+
+export interface WifiConnectList {
+  cells: WifiConnectCell[]
+  connected: WifiConnectConnected | null
+  saved: WifiSavedNet[]
+}
+
+export interface WifiSavedNet {
+  ssid: string
+  has_pass: boolean
+  first?: string
+  last?: string
+}
+
+export function wifiConnectList(): Promise<WifiConnectList> {
+  return getJSON<WifiConnectList>('/api/wifi-connect')
+}
+
+export function wifiConnectDo(ssid: string, passphrase?: string) {
+  return postJSON('/api/wifi-connect/connect', { ssid, passphrase })
+}
+
+export function wifiConnectDisconnect() {
+  return postJSON('/api/wifi-connect/disconnect', {})
+}
+
+export function wifiConnectStatus(): Promise<{ connected: WifiConnectConnected | null }> {
+  return getJSON<{ connected: WifiConnectConnected | null }>('/api/wifi-connect/status')
+}
+
+export function wifiConnectForget(ssid: string): Promise<any> {
+  return fetch(`/api/wifi-connect/${encodeURIComponent(ssid)}`, {
+    method: 'DELETE',
+  }).then(r => r.ok ? { ok: true } : Promise.reject(new Error(r.statusText)))
+}
+
 export function sudoStatus(): Promise<{ available: boolean; passwordless: boolean; ttl_remaining: number }> {
   return getJSON<{ available: boolean; passwordless: boolean; ttl_remaining: number }>('/api/sudo/status')
 }
